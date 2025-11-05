@@ -66,6 +66,8 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [semantic-document-processing-phase1-implementation.md](semantic-document-processing-phase1-implementation.md) - Phase 1 foundation implementation with complete Python code for org-roam parser, zettelkasten chunker, reference extractor, and ChromaDB client.
 
+- [semantic-document-processing-phase2-implementation.md](semantic-document-processing-phase2-implementation.md) - Phase 2 NLP enhancement with coreference resolution, multi-format parsers (PDF, HTML, EPUB), quality control system, and confidence scoring.
+
 ### Semantic Document Processing
 
 - [hierarchical-document-chunking-strategies.md](hierarchical-document-chunking-strategies.md) - Recursive document splitting at multiple structural levels (chapter→section→paragraph→sentence) optimized for different query types.
