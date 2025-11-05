@@ -68,6 +68,8 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [semantic-document-processing-phase2-implementation.md](semantic-document-processing-phase2-implementation.md) - Phase 2 NLP enhancement with coreference resolution, multi-format parsers (PDF, HTML, EPUB), quality control system, and confidence scoring.
 
+- [semantic-document-processing-phase3-implementation.md](semantic-document-processing-phase3-implementation.md) - Phase 3 advanced features with multi-model embeddings, intelligent query classification/routing, advanced search engine, and context reconstruction.
+
 ### Semantic Document Processing
 
 - [hierarchical-document-chunking-strategies.md](hierarchical-document-chunking-strategies.md) - Recursive document splitting at multiple structural levels (chapter→section→paragraph→sentence) optimized for different query types.
