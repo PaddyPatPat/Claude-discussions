@@ -56,6 +56,30 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [gnu-parallel-ollama-batch-processing.md](gnu-parallel-ollama-batch-processing.md) - Shows command-line batch processing using GNU parallel with curl, including job management and monitoring techniques.
 
+## Knowledge Management & Semantic Search
+
+### Semantic Document Processing
+
+- [hierarchical-document-chunking-strategies.md](hierarchical-document-chunking-strategies.md) - Recursive document splitting at multiple structural levels (chapter→section→paragraph→sentence) optimized for different query types.
+
+- [coreference-resolution-nlp.md](coreference-resolution-nlp.md) - Resolving pronouns and references before chunking to preserve context when text is split into embeddings.
+
+- [semantic-search-embedding-strategies.md](semantic-search-embedding-strategies.md) - Multi-level embedding generation with model selection, chunk size optimization, and GPU acceleration for semantic search.
+
+- [query-classification-routing.md](query-classification-routing.md) - Automatic detection of query intent (factual, conceptual, procedural) to route searches to optimal chunk sizes.
+
+### Knowledge Graph Integration
+
+- [org-roam-zettelkasten-semantic-search.md](org-roam-zettelkasten-semantic-search.md) - Integrating org-roam concept notes with semantic search, preserving bidirectional links and relationship types.
+
+- [chromadb-hierarchical-storage.md](chromadb-hierarchical-storage.md) - Vector database storage strategies for multi-level document chunks with parent-child relationship tracking.
+
+### Document Processing Tools
+
+- [nlp-pipeline-tools-overview.md](nlp-pipeline-tools-overview.md) - Comprehensive guide to spaCy, AllenNLP, sentence-transformers, and document parsers for building NLP pipelines.
+
+- [multi-format-document-processing.md](multi-format-document-processing.md) - Format-specific parsers and unified processing for org-mode, Markdown, PDF, HTML, and EPUB documents.
+
 ## Repository Purpose
 
 This repository serves as a knowledge base for:
@@ -63,5 +87,7 @@ This repository serves as a knowledge base for:
 - Integrating AI coding assistants with Emacs
 - Building distributed inference systems for LLMs
 - Batch processing large volumes of inference requests
+- Implementing semantic search and knowledge management systems
+- Processing documents for vector embeddings and retrieval
 
 All content has been extracted from actual conversations, deduplicated, and organized into focused single-topic files for easy reference.
