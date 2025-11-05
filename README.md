@@ -48,6 +48,8 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [mac-studio-unified-memory-inference.md](mac-studio-unified-memory-inference.md) - Demonstrates running multiple large models simultaneously on Apple Silicon's shared memory architecture.
 
+- [ollama-gpu-troubleshooting-guide.md](ollama-gpu-troubleshooting-guide.md) - Diagnoses why Ollama uses CPU instead of GPU, covers CUDA toolkit installation, port conflicts, and environment configuration.
+
 ### Batch Processing
 
 - [llm-batch-processing-strategies.md](llm-batch-processing-strategies.md) - Covers Python-based approaches using ThreadPoolExecutor, asyncio, and Celery for production batch inference workloads.
