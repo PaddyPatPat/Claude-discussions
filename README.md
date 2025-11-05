@@ -34,6 +34,8 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [development-tool-installation-strategies.md](development-tool-installation-strategies.md) - Explains why project-specific npm/pip installation prevents version conflicts and ensures team consistency.
 
+- [npm-nodejs-maintenance-guide.md](npm-nodejs-maintenance-guide.md) - Covers updating npm/Node.js, using nvm for version management, understanding version isolation, and troubleshooting with npm doctor.
+
 ## OLOL & Distributed LLM Inference
 
 ### Core Distributed Inference
