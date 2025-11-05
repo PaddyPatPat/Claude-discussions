@@ -62,6 +62,10 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [semantic-document-processing-project-specification.md](semantic-document-processing-project-specification.md) - Complete project specification for building a semantic document processing system with hierarchical chunking, org-roam integration, and multi-level embeddings.
 
+### Implementation Guides
+
+- [semantic-document-processing-phase1-implementation.md](semantic-document-processing-phase1-implementation.md) - Phase 1 foundation implementation with complete Python code for org-roam parser, zettelkasten chunker, reference extractor, and ChromaDB client.
+
 ### Semantic Document Processing
 
 - [hierarchical-document-chunking-strategies.md](hierarchical-document-chunking-strategies.md) - Recursive document splitting at multiple structural levels (chapter→section→paragraph→sentence) optimized for different query types.
