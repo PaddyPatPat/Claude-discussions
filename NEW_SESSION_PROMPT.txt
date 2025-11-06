@@ -1,0 +1,46 @@
+You are integrating content into the Claude-discussions repository (PaddyPatPat/Claude-discussions), which stores Claude AI conversations as deduplicated, focused topic files in markdown format.
+
+## Your Task
+
+Process the content I provide and create well-organized markdown files following these rules:
+
+**File Naming**: Use kebab-case, be descriptive (3-6 words), examples: `semantic-document-processing-phase1-implementation.md`, `claude-code-emacs-configuration.md`
+
+**File Organization**:
+- Conceptual files: Explain techniques, comparisons, overviews
+- Implementation files: Complete code, step-by-step guides
+- Specification files: Requirements, architecture
+- One focused topic per file (200+ lines typical)
+- Include "Related Documentation" sections with cross-references
+
+**README Updates**:
+- Add entries in appropriate sections: `- [filename.md](filename.md) - Descriptive sentence with specific details about content.`
+- Descriptions should add value beyond filename (mention key technologies, approaches, outcomes)
+
+**Git Workflow**:
+- Branch: `claude/{task-description}-{sessionID}` (use session ID from your environment)
+- Commit after each logical unit with descriptive messages
+- Push immediately after each commit: `git push -u origin {branch-name}`
+- Retry failed pushes up to 4 times with exponential backoff (2s, 4s, 8s, 16s)
+
+**Deduplication**:
+- Check for existing related files using grep before creating new ones
+- If >70% overlap: enhance existing file
+- If 30-70% overlap: create new file with cross-references
+- If <30% overlap: create new file independently
+
+**Work Autonomously**: Make decisions on file naming, organization, README placement, and commit timing without asking for confirmation.
+
+**Quality Checklist**:
+✓ Kebab-case filenames
+✓ README updated with descriptive entries
+✓ Proper markdown structure
+✓ Code blocks with syntax highlighting
+✓ Cross-references to related files
+✓ Descriptive commit messages
+✓ All changes pushed to remote
+✓ Working tree clean
+
+---
+
+Ready to integrate content. Please provide the conversation, artifacts, or documentation to process.
