@@ -1,0 +1,263 @@
+#+TITLE: System vs Application Containers
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: containers lxc oci architecture
+
+* Fundamental Difference
+
+Two fundamentally different philosophies of containerization:
+- System containers: Virtual machine replacement
+- Application containers: Single application isolation
+
+* System Containers (Proxmox LXC)
+
+** Virtual Machine Replacement
+
+- Provide environment that feels like complete operating system
+- Much lower overhead than full VM
+- Long-running, persistent systems
+
+** Multiple Processes
+
+Run multiple processes simultaneously:
+- Init systems (systemd)
+- Cron jobs
+- SSH daemons
+- Logging services
+- Multiple application services
+
+** Persistent State
+
+- Designed to be long-running and stateful
+- Install software and expect persistence
+- Modify configurations
+- Changes persist across restarts
+
+** Traditional Administration
+
+Manage like physical servers:
+- SSH in for access
+- Install packages with apt/yum
+- Edit config files directly
+- Run multiple services simultaneously
+
+** Resource Allocation
+
+- Dedicated CPU cores
+- RAM allocation
+- Persistent storage
+- Example: "Allocate 2 cores and 4GB RAM"
+
+** Networking
+
+- Own IP addresses
+- Network interfaces
+- Appear on network like separate machines
+
+* Application Containers (Podman/Docker)
+
+** Single Responsibility
+
+Each container typically runs one application or service:
+- Web server OR
+- Database OR
+- API service
+- Not all together
+
+** Immutable Infrastructure
+
+- Container image is immutable
+- Don't SSH in and modify running containers
+- Rebuild and redeploy instead
+
+** Process Focus
+
+- Usually runs single process
+- Process might spawn children
+- When main process dies, container stops
+
+** Ephemeral by Design
+
+- Containers come and go frequently
+- Data that needs to persist goes in:
+  - External volumes
+  - Databases
+  - Shared storage
+
+** Declarative Configuration
+
+Configured through:
+- Environment variables
+- Config files mounted as volumes
+- Startup parameters
+- Not by logging in and editing files
+
+** Microservices Architecture
+
+Designed for applications split into many small, interconnected services.
+
+* Practical Examples
+
+** System Container Scenario: LAMP Stack
+
+In an LXC container:
+
+#+BEGIN_SRC bash
+# Install Ubuntu template
+# Then install all services
+apt install apache2 mysql-server php
+
+# Configure each service
+systemctl enable apache2
+systemctl enable mysql
+
+# All services run simultaneously in one container
+# SSH in to troubleshoot or update
+ssh user@lxc-container
+#+END_SRC
+
+** Application Container Scenario: LAMP Stack
+
+Split into multiple containers:
+
+#+BEGIN_SRC yaml
+# docker-compose.yml or podman-compose equivalent
+services:
+  web:
+    image: php:apache
+    ports:
+      - "80:80"
+    volumes:
+      - ./app:/var/www/html
+
+  database:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+    volumes:
+      - db-data:/var/lib/mysql
+
+  phpmyadmin:
+    image: phpmyadmin
+    ports:
+      - "8080:80"
+    environment:
+      PMA_HOST: database
+
+volumes:
+  db-data:
+#+END_SRC
+
+Update by replacing containers, not modifying them.
+
+* Resource and Isolation Differences
+
+** System Containers
+
+- Share host kernel but have own:
+  - Filesystem
+  - Network stack
+  - Process tree
+- Stronger isolation than application containers
+- More resource overhead per container
+- Better suited for fewer, larger workloads
+
+** Application Containers
+
+- Very lightweight, minimal overhead
+- Weaker isolation (share more with host)
+- Optimized for running many containers simultaneously
+- Better suited for microservices and cloud-native architectures
+
+* When to Use Each
+
+** Use System Containers When
+
+- Migrating from VMs and want familiar administration
+- Running legacy applications expecting full OS environments
+- Need strong isolation between different tenants/projects
+- Want to consolidate multiple related services
+- Need traditional system services (cron, logging, SSH)
+
+** Use Application Containers When
+
+- Building cloud-native, microservices applications
+- Want easy scaling and deployment automation
+- Following DevOps practices with infrastructure as code
+- Need to run many different services efficiently
+- Want portable applications across environments
+
+* Technical Comparison
+
+| Aspect | System Containers | Application Containers |
+|----------------------+---------------------+-----------------------------|
+| Processes | Multiple | Single (typically) |
+| Init System | Yes (systemd) | No |
+| SSH Access | Yes | No (discouraged) |
+| State | Persistent | Ephemeral |
+| Updates | In-place | Replace container |
+| IP Address | Usually dedicated | Shared/mapped |
+| Use Case | Server consolidation | Microservices |
+| Management | Traditional sysadmin | DevOps/orchestration |
+| Image Format | Templates/disk images | OCI layers |
+| Startup Time | Slower (seconds) | Fast (milliseconds) |
+| Resource Overhead | Higher | Lower |
+| Isolation Strength | Stronger | Weaker |
+
+* OCI Compliance
+
+** LXC Containers
+
+- NOT OCI-compliant
+- System containerization technology
+- Uses templates, disk images, or rootfs tarballs
+- Not standardized format
+
+See [[file:oci-standards.org][OCI Standards]] for details.
+
+** OCI Containers
+
+- Standardized layered image format
+- Manifests and metadata
+- Portable across runtimes
+
+* Two-Layer Architecture in Proxmox
+
+In Proxmox setup with both:
+
+#+BEGIN_SRC
+Proxmox Host
+├── LXC Container (system-level containerization)
+│   ├── Ubuntu OS
+│   ├── systemd
+│   ├── SSH daemon
+│   └── Podman runtime
+│       ├── Web App Container (OCI)
+│       ├── Database Container (OCI)
+│       └── Cache Container (OCI)
+└── Another LXC Container
+    └── Different workload
+#+END_SRC
+
+- Proxmox LXC: System-level isolation and resource management
+- Podman inside LXC: OCI-compliant application containerization
+- They serve different but complementary purposes
+
+* Best of Both Worlds
+
+System containers provide:
+- Strong isolation
+- Familiar administration
+- Resource control
+
+Application containers inside them give:
+- Modern application deployment patterns
+- Easy scaling
+- Portability
+
+* Related Topics
+
+- [[file:oci-standards.org][OCI Standards]]
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM Comparison]]
+- [[file:architecture-patterns.org][Architecture Patterns]]
+- [[file:proxmox-containers-overview.org][Proxmox Overview]]

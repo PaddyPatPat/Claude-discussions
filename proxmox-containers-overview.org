@@ -1,0 +1,82 @@
+#+TITLE: Proxmox Application Containers Overview
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: proxmox containers podman lxc
+
+* Overview
+
+This document provides an overview of using application containers with Proxmox, focusing on open-source solutions and best practices.
+
+* Container Options in Proxmox
+
+** LXC Containers vs Virtual Machines
+
+- LXC (Linux Containers): Lighter alternative to full VMs
+- LXC containers share the host kernel but provide good isolation
+- Better resource efficiency than VM + Docker/Podman approach
+
+See [[file:lxc-vs-vm-for-containers.org][LXC vs VM Detailed Comparison]] for more information.
+
+** Nested Containerization
+
+Running Podman inside LXC containers requires enabling nesting:
+
+#+BEGIN_SRC conf
+Features: nesting=1
+#+END_SRC
+
+This configuration is officially supported and works well.
+
+* Recommended Approach
+
+** Why Podman for Open Source
+
+See [[file:podman-vs-docker.org][Podman vs Docker Comparison]] for detailed reasoning.
+
+Key benefits:
+- Rootless by design
+- No persistent daemon
+- Native pod support
+- Fully open-source and OCI compliant
+
+** Networking and Service Discovery
+
+- Proxmox SDN: Use Software Defined Networking features for isolated networks
+- Pod Networking: Podman pods share networking (containers communicate via localhost)
+- Service Mesh: For complex inter-service communication (Consul Connect, Linkerd2-proxy)
+
+** Management and Orchestration
+
+- podman-compose: Alternative to docker-compose
+- Systemd Integration: Podman generates systemd unit files for service management
+- Cockpit Integration: Web-based management with excellent Podman support
+
+** Storage Considerations
+
+- Proxmox Storage: Leverage Proxmox storage backends (ZFS, Ceph, etc.)
+- Container Storage: Configure Podman with appropriate storage drivers (overlay recommended)
+- Persistent Volumes: Use Proxmox backup solutions for entire LXC containers
+
+* Recommended Architecture
+
+1. Create LXC containers (not VMs) for application workloads
+2. Install Podman in each LXC container with nesting enabled
+3. Use Podman pods to group related services
+4. Implement service discovery mechanism (DNS-based or Consul)
+5. Use Proxmox backup features for containerized applications
+
+* Related Topics
+
+- [[file:architecture-patterns.org][Architecture Patterns]] - Different ways to organize containers
+- [[file:oci-standards.org][OCI Standards]] - Understanding container image standards
+- [[file:system-vs-application-containers.org][System vs Application Containers]] - Fundamental differences
+- [[file:high-availability-setup.org][High Availability Setup]] - Multi-host configurations
+
+* Benefits
+
+This approach provides:
+- Benefits of containerization
+- Maintains open-source principles
+- Good integration with Proxmox management ecosystem
+- Resource efficiency
+- Flexibility in deployment

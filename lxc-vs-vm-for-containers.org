@@ -1,0 +1,138 @@
+#+TITLE: LXC vs VM for Container Runtimes
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: lxc vm proxmox docker podman
+
+* Why Proxmox Recommends Docker in VMs
+
+** Technical Issues with Docker in LXC
+
+*** Kernel Sharing Conflicts
+
+- LXC containers share the host kernel
+- Docker's networking (iptables rules) can conflict with host
+- Storage drivers may conflict with host system and other containers
+- Kernel module requirements can cause issues
+
+*** Security Concerns
+
+- Docker traditionally runs as root
+- Manages kernel resources directly
+- Can compromise isolation that LXC provides
+
+*** cgroups Management
+
+- Both LXC and Docker want to manage cgroups
+- Leads to potential conflicts
+
+* Podman's Advantages in LXC
+
+** Rootless Architecture
+
+- Podman can run completely rootless
+- Eliminates privilege escalation concerns that make Docker problematic
+- See [[file:podman-vs-docker.org][Podman vs Docker]] for more details
+
+** No Daemon
+
+- No persistent daemon making system-level changes
+- Smaller footprint on host kernel
+- Fewer conflicts with LXC
+
+** Better cgroups Handling
+
+- Podman's architecture more compatible with LXC resource management
+
+* Important Caveats
+
+Even with Podman, some scenarios are problematic in LXC:
+
+** Privileged Containers
+
+If you need privileged containers, use a VM instead.
+
+See [[file:privileged-containers.org][Privileged Containers]] for details on when these are required.
+
+** Kernel Module Requirements
+
+Applications requiring specific kernel modules or direct hardware access work better in VMs.
+
+** Complex Networking
+
+Advanced networking features (custom CNI plugins) may conflict in LXC environments.
+
+* When to Use VMs Instead
+
+** Production Workloads
+
+For critical production systems, VMs provide stronger isolation boundaries.
+
+** Compliance Requirements
+
+Regulatory environments often require VM-level isolation.
+
+** Mixed Container Runtimes
+
+If you need both Docker and Podman, or Docker for specific applications.
+
+** Resource Intensive Applications
+
+- Database containers
+- Applications with specific kernel requirements
+- Better isolation for heavy workloads
+
+** Custom Kernels
+
+When you need:
+- Different kernel versions
+- Custom kernel configurations
+- Specific kernel modules not available on host
+
+* Decision Factors
+
+The best choice depends on:
+
+- Security requirements
+- Performance needs
+- Complexity of containerized applications
+- Risk tolerance
+- Compliance requirements
+
+* Reality Check
+
+** Conservative Approach
+
+While Podman-in-LXC can work well for:
+- Development environments
+- Many use cases
+- Non-critical workloads
+
+Proxmox's conservative VM recommendation exists for good reasons.
+
+** Maximum Compatibility
+
+For maximum compatibility and isolation, VMs remain the safer choice, even with Podman.
+
+** Optimization vs Safety
+
+LXC + Podman is an optimization for specific use cases where you understand and accept the trade-offs.
+
+* Comparison Table
+
+| Aspect | LXC + Podman | VM + Podman |
+|------------------+------------------------+----------------------|
+| Isolation | Good | Excellent |
+| Resource Usage | Lower overhead | Higher overhead |
+| Security | Good (with rootless) | Better |
+| Kernel Sharing | Shared with host | Isolated kernel |
+| Setup Complexity | Lower | Higher |
+| Performance | Better | Good |
+| Flexibility | Limited | Full |
+| Use Case | Dev, testing, light prod | Production, compliance |
+
+* Related Topics
+
+- [[file:podman-vs-docker.org][Podman vs Docker Comparison]]
+- [[file:system-vs-application-containers.org][System vs Application Containers]]
+- [[file:architecture-patterns.org][Architecture Patterns]]
+- [[file:proxmox-containers-overview.org][Proxmox Overview]]

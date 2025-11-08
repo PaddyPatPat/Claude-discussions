@@ -1,0 +1,155 @@
+#+TITLE: Podman vs Docker
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: podman docker comparison migration
+
+* Why Podman Makes Sense for Proxmox
+
+** Rootless by Design
+
+- Podman can run containers without root privileges
+- Excellent for security in multi-tenant Proxmox environment
+- Reduces privilege escalation risks
+
+** No Daemon
+
+- Unlike Docker, Podman doesn't require a persistent daemon
+- Reduces attack surface
+- Lower resource overhead
+
+** Pod Support
+
+- Native pod support similar to Kubernetes pods
+- Easier to group related containers
+- Simplified networking management between containers
+
+** OCI Compliance
+
+- Fully open-source
+- Follows Open Container Initiative standards
+- See [[file:oci-standards.org][OCI Standards]] for more details
+
+* Compatibility with Docker
+
+** Drop-in Replacement
+
+Most Docker commands work by simply replacing =docker= with =podman=:
+
+#+BEGIN_SRC bash
+# Docker command
+docker run -d nginx:latest
+
+# Equivalent Podman command
+podman run -d nginx:latest
+#+END_SRC
+
+** Container Images
+
+- Podman can pull and run the same OCI-compliant container images
+- Works with Docker Hub, Quay.io, and other registries
+- See [[file:oci-standards.org][OCI Standards]] for image compatibility details
+
+** Dockerfile Support
+
+Podman can build images from Dockerfiles:
+
+#+BEGIN_SRC bash
+podman build -t myimage:latest .
+#+END_SRC
+
+* Docker Compose Equivalent
+
+** podman-compose
+
+Tool that runs most docker-compose.yml files with minimal modifications:
+
+#+BEGIN_SRC bash
+podman-compose up -d
+#+END_SRC
+
+** Alternative: Podman Generate
+
+Generate Kubernetes YAML or systemd unit files from running containers:
+
+#+BEGIN_SRC bash
+# Generate Kubernetes YAML
+podman generate kube mycontainer > myapp.yaml
+
+# Generate systemd service file
+podman generate systemd --new --name mycontainer
+#+END_SRC
+
+* Key Differences to Watch For
+
+** Networking
+
+- Docker creates default bridge network
+- Podman uses different default networking approach
+- Multi-container applications may need network configuration adjustments
+
+** Root vs Rootless
+
+- Many Docker tutorials assume root privileges
+- Rootless Podman requires adjustments:
+  - Ports < 1024 require root or additional configuration
+  - Volume mount permissions may differ
+
+** Docker Daemon
+
+- Instructions assuming dockerd is running don't apply to Podman
+- Podman's daemonless architecture works differently
+
+* Migration Guide
+
+** Common Adjustments Needed
+
+*** Port Mapping
+
+Rootless Podman can't bind to privileged ports (< 1024) without additional configuration.
+
+*** Volume Paths
+
+SELinux contexts and permission handling might require adjustments for bind mounts.
+
+*** Systemd Integration
+
+Podman's systemd integration differs from Docker's restart policies.
+
+** Things That Won't Work
+
+- Docker Swarm
+- Docker Desktop specific features
+- Docker-specific networking plugins
+- Docker socket access (=/var/run/docker.sock=)
+- Docker Context/BuildKit advanced features
+
+** Best Practice Approach
+
+1. Start with Docker instructions, replacing =docker= with =podman=
+2. Test basic functionality
+3. Adjust networking and permissions as needed
+4. Convert to podman-compose or systemd units for production
+
+** Success Rate
+
+Approximately 80-90% of typical Docker setups work with minimal modifications.
+
+Cases requiring more work usually involve:
+- Complex networking
+- Privileged operations
+- Docker-specific orchestration features
+
+* When Docker Might Still Be Needed
+
+- Specific applications that explicitly require Docker
+- Docker Swarm deployments
+- Tools that communicate via Docker socket
+- Legacy systems with hard Docker dependencies
+
+See [[file:privileged-containers.org][Privileged Containers]] for scenarios where either runtime may require elevated privileges.
+
+* Related Topics
+
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM Considerations]]
+- [[file:oci-standards.org][OCI Standards]]
+- [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]

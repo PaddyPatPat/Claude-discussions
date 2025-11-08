@@ -1,0 +1,514 @@
+#+TITLE: High Availability Setup for Podman Containers
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ha high-availability proxmox clustering podman
+
+* Overview
+
+Creating high availability for Podman application containers across multiple Proxmox hosts requires combining several technologies and strategies.
+
+* Layer 1: Proxmox Clustering for Infrastructure HA
+
+** Proxmox Cluster
+
+Create Proxmox cluster with multiple hosts providing:
+
+- Shared configuration across nodes
+- Ability to migrate LXC containers between hosts
+- Centralized management through any cluster node
+- Quorum-based decision making
+
+** Shared Storage
+
+Implement shared storage so LXC containers can migrate between hosts without data loss:
+
+*** Storage Options
+
+- Ceph (distributed storage, built into Proxmox)
+- ZFS replication
+- External SAN
+- NFS/GlusterFS
+
+*** Benefits
+
+- LXC containers can move between hosts
+- Persistent data survives host failures
+- Backup and restore across cluster
+
+** LXC Migration
+
+Configure live migration for LXC containers:
+
+#+BEGIN_SRC bash
+# Manual migration example
+pct migrate <vmid> <target-node>
+
+# Enable auto-migration in cluster
+# Configure HA groups in Proxmox
+#+END_SRC
+
+Allows containers to move between hosts during:
+- Maintenance
+- Failures
+- Load balancing
+
+* Layer 2: Application-Level HA Strategies
+
+** Load Balancer Layer
+
+Deploy load balancer across multiple LXC containers on different Proxmox hosts.
+
+*** Options
+
+- HAProxy
+- NGINX
+- Traefik
+
+*** Architecture
+
+#+BEGIN_SRC
+Internet
+    |
+    v
+[Floating IP / DNS]
+    |
+    +-- HAProxy LXC (Host 1)
+    +-- HAProxy LXC (Host 2)
+    +-- HAProxy LXC (Host 3)
+    |
+    v
+Backend Application Containers
+#+END_SRC
+
+This distributes traffic and handles individual container failures.
+
+** Service Replication
+
+Run multiple instances of each Podman application across different LXC containers on different hosts.
+
+*** Example Architecture
+
+#+BEGIN_SRC
+Host 1: LXC-WebApp-1
+├── Podman: webapp:v1
+
+Host 2: LXC-WebApp-2
+├── Podman: webapp:v1
+
+Host 3: LXC-WebApp-3
+├── Podman: webapp:v1
+#+END_SRC
+
+Use pod replicas or multiple containers with shared data stores.
+
+** Database Clustering
+
+For stateful services, implement database clustering across multiple hosts:
+
+*** PostgreSQL Streaming Replication
+
+- Primary on one host
+- Replicas on other hosts
+- Automatic failover with tools like Patroni
+
+*** MySQL Galera Cluster
+
+- Multi-master replication
+- Automatic node recovery
+
+*** Redis Sentinel
+
+- Redis replication
+- Automatic failover
+- Sentinel monitors for health
+
+* Layer 3: Container Orchestration Options
+
+** Kubernetes Across LXC
+
+Deploy lightweight Kubernetes distribution across LXC containers on multiple Proxmox hosts.
+
+*** K3s (Recommended)
+
+Lightweight Kubernetes distribution:
+
+#+BEGIN_SRC bash
+# On first host (server)
+curl -sfL https://get.k3s.io | sh -
+
+# On additional hosts (agents)
+curl -sfL https://get.k3s.io | K3S_URL=https://myserver:6443 \
+  K3S_TOKEN=mytoken sh -
+#+END_SRC
+
+*** MicroK8s
+
+Another lightweight option with snap packages.
+
+*** Benefits
+
+- Automatic pod scheduling and rescheduling
+- Service discovery and load balancing
+- Rolling updates and rollbacks
+- Native HA capabilities
+- Health checks and auto-restart
+- Declarative configuration
+
+*** Architecture
+
+#+BEGIN_SRC
+Proxmox Host 1
+├── LXC: K3s Server
+│   └── Kubernetes control plane
+
+Proxmox Host 2
+├── LXC: K3s Agent
+│   └── Application pods
+
+Proxmox Host 3
+├── LXC: K3s Agent
+│   └── Application pods
+#+END_SRC
+
+** Docker Swarm Alternative
+
+While preferring Podman, Docker Swarm offers native container orchestration.
+
+*** Note
+
+Less recommended given Podman preference, but viable option.
+
+** Nomad with Podman
+
+HashiCorp Nomad can orchestrate Podman containers across multiple hosts.
+
+*** Benefits
+
+- Supports Podman directly
+- Simpler than Kubernetes
+- Good HA features
+- Multi-datacenter support
+
+*** Example Job
+
+#+BEGIN_SRC hcl
+job "webapp" {
+  datacenters = ["dc1"]
+  type = "service"
+
+  group "app" {
+    count = 3
+
+    task "web" {
+      driver = "podman"
+
+      config {
+        image = "myapp:latest"
+        ports = ["http"]
+      }
+    }
+  }
+}
+#+END_SRC
+
+* Layer 4: Networking for HA
+
+** Software Defined Networking
+
+*** Proxmox SDN
+
+Use Proxmox SDN features to create overlay networks spanning multiple hosts.
+
+*** External Solutions
+
+- Cilium (with eBPF)
+- Calico
+- Flannel
+
+** Floating IPs
+
+Configure floating/virtual IPs that can move between hosts during failover.
+
+*** keepalived Example
+
+#+BEGIN_SRC conf
+vrrp_instance VI_1 {
+    state MASTER
+    interface eth0
+    virtual_router_id 51
+    priority 100
+    virtual_ipaddress {
+        192.168.1.100
+    }
+}
+#+END_SRC
+
+** Service Mesh
+
+Implement for advanced traffic management and failure handling.
+
+*** Options
+
+- Istio
+- Linkerd
+- Consul Connect
+
+*** Benefits
+
+- Automatic retry logic
+- Circuit breaking
+- Traffic splitting
+- Observability
+
+* Layer 5: Data Persistence and Backup
+
+** Distributed Storage
+
+Solutions providing distributed storage that survive individual host failures:
+
+*** GlusterFS
+
+- Distributed filesystem
+- Replication across hosts
+
+*** Longhorn
+
+- Cloud-native distributed block storage
+- Kubernetes integration
+
+*** Rook-Ceph
+
+- Ceph orchestration for Kubernetes
+- Distributed storage operator
+
+** Database Replication
+
+Ensure stateful services have data replication across multiple hosts.
+
+*** Example: PostgreSQL
+
+#+BEGIN_SRC
+Host 1: Primary Database
+Host 2: Streaming Replica
+Host 3: Streaming Replica
+
+Automatic failover with Patroni
+#+END_SRC
+
+** Backup Strategy
+
+Regular backups of both LXC containers and application data:
+
+*** Proxmox Backup
+
+- Scheduled LXC container backups
+- Incremental backups
+- Store on separate backup server
+
+*** Application Data
+
+- Database dumps
+- Volume backups
+- Object storage replication
+
+*** Restore Capability
+
+- Test restore procedures
+- Document recovery process
+- Ability to restore on different hosts
+
+* Layer 6: Monitoring and Failover
+
+** Health Monitoring
+
+Deploy monitoring to track service health across all hosts.
+
+*** Prometheus + Grafana
+
+#+BEGIN_SRC yaml
+# Example Prometheus targets
+- job_name: 'podman-containers'
+  static_configs:
+    - targets:
+      - host1:9100
+      - host2:9100
+      - host3:9100
+#+END_SRC
+
+*** Zabbix
+
+- Agent-based monitoring
+- Automatic discovery
+- Alerting
+
+*** Checks to Monitor
+
+- Container health status
+- Resource utilization
+- Network connectivity
+- Storage availability
+- Application-specific metrics
+
+** Automated Failover
+
+Scripts or tools detecting failures and automatically starting services on healthy hosts.
+
+*** Proxmox HA Manager
+
+Built-in HA for LXC containers:
+
+#+BEGIN_SRC bash
+# Add resource to HA
+ha-manager add ct:100
+
+# Configure HA group
+ha-manager groupadd mygroup -nodes "host1:1,host2:2,host3:3"
+#+END_SRC
+
+*** Custom Scripts
+
+For application-level failover:
+
+#+BEGIN_SRC bash
+#!/bin/bash
+# Health check script
+if ! curl -f http://app:8080/health; then
+  # Restart or failover logic
+  podman restart myapp
+fi
+#+END_SRC
+
+** Service Discovery
+
+Services can find each other regardless of which host they're running on.
+
+*** Consul
+
+- Service registration
+- Health checking
+- DNS interface
+
+*** etcd
+
+- Key-value store
+- Service discovery
+- Configuration management
+
+*** DNS-Based
+
+- Dynamic DNS updates
+- SRV records
+- Round-robin
+
+* Example Complete Architecture
+
+#+BEGIN_SRC
+Proxmox Host 1:
+├── LXC: Load Balancer (HAProxy + keepalived)
+├── LXC: K3s Server (Kubernetes control plane)
+├── LXC: Web App Instance 1
+│   └── Podman: webapp:v1
+└── LXC: Database Primary
+    └── Podman: postgres:14 (primary)
+
+Proxmox Host 2:
+├── LXC: Load Balancer (HAProxy + keepalived)
+├── LXC: K3s Agent
+├── LXC: Web App Instance 2
+│   └── Podman: webapp:v1
+└── LXC: Database Replica 1
+    └── Podman: postgres:14 (replica)
+
+Proxmox Host 3:
+├── LXC: Load Balancer (HAProxy + keepalived)
+├── LXC: K3s Agent
+├── LXC: Web App Instance 3
+│   └── Podman: webapp:v1
+└── LXC: Database Replica 2
+    └── Podman: postgres:14 (replica)
+
+Shared Storage: Ceph cluster across all hosts
+Networking: Proxmox SDN with overlay networks
+Monitoring: Prometheus + Grafana on separate LXC
+Backup: Proxmox Backup Server on separate host
+#+END_SRC
+
+* Recommended Approach for Most Setups
+
+** Infrastructure Layer
+
+1. Proxmox cluster with 3+ nodes
+2. Ceph or ZFS replication for shared storage
+3. Proxmox HA Manager for LXC containers
+
+** Application Layer
+
+4. Multiple LXC containers per service across different hosts
+5. K3s for container orchestration (if complexity warranted)
+6. HAProxy or Traefik for load balancing
+
+** Data Layer
+
+7. Database replication with automatic failover (Patroni, Galera)
+8. Persistent volumes on shared storage
+9. Regular backups to separate backup server
+
+** Operations Layer
+
+10. Prometheus + Grafana for monitoring and alerting
+11. Consul or DNS for service discovery
+12. Automated health checks and failover
+
+* Complexity Levels
+
+** Simple HA Setup
+
+- Replicate services across 2-3 hosts
+- External load balancer
+- Manual failover procedures
+
+** Moderate HA Setup
+
+- Proxmox cluster with HA Manager
+- Replicated databases with automatic failover
+- Load balancer with health checks
+- Monitoring and alerting
+
+** Advanced HA Setup
+
+- Full Kubernetes orchestration
+- Service mesh
+- Distributed storage
+- Automated everything
+- Multi-site replication
+
+* Key Principle: Layered HA
+
+The key is layering HA at multiple levels:
+
+1. Infrastructure (Proxmox clustering)
+2. Container level (multiple instances)
+3. Networking (load balancing)
+4. Data (replication)
+5. Monitoring (observability)
+6. Operations (automation)
+
+This provides redundancy if any single component fails.
+
+* TODO Items for Implementation
+
+** TODO Set up Proxmox cluster with shared storage
+** TODO Configure LXC container migration
+** TODO Deploy load balancer across multiple hosts
+** TODO Implement database replication
+** TODO Set up monitoring and alerting
+** TODO Test failover scenarios
+** TODO Document recovery procedures
+** TODO Create backup and restore procedures
+
+* Related Topics
+
+- [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]
+- [[file:architecture-patterns.org][Architecture Patterns]]
+- [[file:system-vs-application-containers.org][System vs Application Containers]]
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM Comparison]]

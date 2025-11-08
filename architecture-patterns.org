@@ -1,0 +1,316 @@
+#+TITLE: Architecture Patterns for Containers in Proxmox
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: architecture patterns proxmox lxc podman design
+
+* Overview
+
+Different approaches to organizing Podman containers within LXC containers on Proxmox, with trade-offs for each pattern.
+
+* Pattern 1: One Podman Container per LXC Container
+
+** Description
+
+Each application container gets its own dedicated LXC container.
+
+#+BEGIN_SRC
+Proxmox Host
+├── LXC: Web App
+│   └── Podman: nginx container
+├── LXC: Database
+│   └── Podman: postgres container
+├── LXC: Cache
+│   └── Podman: redis container
+└── LXC: API
+    └── Podman: api container
+#+END_SRC
+
+** Why Consider This Approach
+
+*** Maximum Isolation
+
+- Each application gets own kernel namespace
+- Own filesystem and resource boundaries
+- Compromise in one application can't easily affect others
+
+*** Individual Resource Control
+
+- Allocate specific CPU cores, RAM limits, storage quotas through LXC
+- More granular control than container resource limits alone
+
+*** Simplified Networking
+
+- Each LXC container can have own IP address
+- Service discovery more straightforward
+- Network policies easier than managing container networks
+
+*** Independent System Dependencies
+
+- Applications requiring different system libraries can coexist
+- Different kernel modules
+- Different OS configurations
+
+*** Better Backup Granularity
+
+- Backup, snapshot, and restore individual applications independently
+- Use Proxmox LXC backup features
+
+*** Compliance and Security
+
+- Some regulatory environments require stronger isolation
+- LXC provides isolation boundaries beyond application containers
+
+*** Simplified Troubleshooting
+
+- Each application environment completely isolated
+- Easier to debug without interference
+
+** Why Not Consider This Approach
+
+*** Resource Overhead
+
+- Running many LXC containers consumes significantly more RAM and storage
+- Each LXC container needs own OS userspace
+- Expensive at scale (dozens or hundreds of containers)
+
+*** Management Complexity
+
+- Instead of managing one LXC with multiple Podman containers
+- Manage many LXC containers
+- Each with own OS updates, security patches, configurations
+
+*** Network Complexity
+
+- Inter-service communication more complex
+- Services in separate LXC containers with different IPs
+- Requires more network configuration
+
+*** Lost Container Orchestration Benefits
+
+- Lose advantages of container orchestration
+- No easy scaling, rolling updates, service meshes
+- No declarative deployments
+
+*** Storage Inefficiency
+
+- Container image layers can't be shared between LXC containers
+- Duplicated storage usage
+
+*** Performance Impact
+
+- Additional network hops
+- Additional isolation layers can impact performance
+- Especially for high-throughput applications
+
+*** Cost at Scale
+
+- Resource overhead makes this expensive for large numbers of services
+
+** When This Makes Sense
+
+- High-security environments (isolation more important than efficiency)
+- Regulatory compliance requiring VM-level isolation
+- Legacy migration from VMs (each service had own server)
+- Resource-rich environments (abundant CPU and RAM)
+- Small numbers of services (5-10 manageable; 50-100 unwieldy)
+
+** When to Avoid This
+
+- Microservices architecture (overhead defeats purpose)
+- Resource-constrained environments (overhead too expensive)
+- Dynamic scaling needs (LXC doesn't scale as easily)
+- Development environments (complexity slows development)
+
+* Pattern 2: Multiple Podman Containers per LXC Container
+
+** Description
+
+Group related services in same LXC container.
+
+#+BEGIN_SRC
+Proxmox Host
+├── LXC: Web Application Stack
+│   ├── Podman: nginx container
+│   ├── Podman: php-fpm container
+│   └── Podman: redis cache container
+├── LXC: Database Services
+│   ├── Podman: postgres primary
+│   └── Podman: postgres replica
+└── LXC: Monitoring Stack
+    ├── Podman: prometheus
+    ├── Podman: grafana
+    └── Podman: alertmanager
+#+END_SRC
+
+** Advantages
+
+- Better resource efficiency than one-to-one pattern
+- Logical grouping of related services
+- Easier inter-service communication within LXC
+- Container image layer sharing within LXC
+- Balanced isolation and efficiency
+
+** Middle-Ground Grouping Strategies
+
+*** Grouping by Function
+
+Related services together:
+
+#+BEGIN_SRC
+LXC: E-commerce Frontend
+├── Web server
+├── Application server
+└── Session cache
+
+LXC: E-commerce Backend
+├── API server
+├── Background workers
+└── Message queue
+#+END_SRC
+
+*** Grouping by Security Zone
+
+Services with similar security requirements:
+
+#+BEGIN_SRC
+LXC: Public-Facing Services
+├── Reverse proxy
+└── Static content server
+
+LXC: Private Services
+├── Database
+├── Internal API
+└── Admin interface
+#+END_SRC
+
+*** Environment-Based Grouping
+
+Separate LXC containers per environment:
+
+#+BEGIN_SRC
+LXC: Development
+├── All dev services
+
+LXC: Staging
+├── All staging services
+
+LXC: Production
+├── All production services
+#+END_SRC
+
+*** Tenant-Based Grouping
+
+Multi-tenant scenarios:
+
+#+BEGIN_SRC
+LXC: Customer A
+├── Customer A services
+
+LXC: Customer B
+├── Customer B services
+#+END_SRC
+
+** When This Makes Sense
+
+- Most common production deployments
+- Balances efficiency and isolation
+- Typical small to medium deployments
+- Teams wanting logical service grouping
+
+* Pattern 3: Single LXC with All Containers
+
+** Description
+
+One LXC container running all application containers.
+
+#+BEGIN_SRC
+Proxmox Host
+└── LXC: Application Platform
+    ├── Podman: web1
+    ├── Podman: web2
+    ├── Podman: api1
+    ├── Podman: api2
+    ├── Podman: database
+    ├── Podman: cache
+    ├── Podman: queue
+    └── Podman: workers
+#+END_SRC
+
+** Advantages
+
+- Maximum resource efficiency
+- Simplest management (one LXC to maintain)
+- Easy container-to-container communication
+- Maximum image layer sharing
+- Best for development environments
+
+** Disadvantages
+
+- Single point of failure
+- Less isolation between services
+- All services share same LXC resource limits
+- More complex backup/restore (all or nothing)
+
+** When This Makes Sense
+
+- Development environments
+- Resource-constrained setups
+- Simple applications
+- Non-critical workloads
+
+* Comparison Table
+
+| Aspect | One-to-One | Grouped | Single LXC |
+|---------------------+---------------+--------------+---------------|
+| Resource Efficiency | Low | Medium | High |
+| Management Complexity | High | Medium | Low |
+| Isolation | Maximum | Good | Basic |
+| Inter-service Comms | Complex | Moderate | Simple |
+| Backup Granularity | Individual | Group-level | All-or-nothing |
+| Scaling | Difficult | Moderate | Easy |
+| Security | Highest | Good | Lower |
+| Cost | Highest | Medium | Lowest |
+| Use Case | Compliance | Production | Development |
+
+* Decision Framework
+
+** Choose One-to-One When
+
+- [ ] Regulatory compliance requires strong isolation
+- [ ] High-security environment
+- [ ] Abundant resources available
+- [ ] Small number of services (< 10)
+- [ ] Services have very different resource needs
+- [ ] Need individual service backup/restore
+
+** Choose Grouped When
+
+- [ ] Balancing efficiency and isolation
+- [ ] Production deployments
+- [ ] Related services benefit from co-location
+- [ ] Moderate resource availability
+- [ ] Want logical organizational boundaries
+- [ ] Need some isolation but not maximum
+
+** Choose Single LXC When
+
+- [ ] Development environment
+- [ ] Resource-constrained
+- [ ] Simple application
+- [ ] Non-critical workload
+- [ ] Maximum efficiency needed
+- [ ] Easy management more important than isolation
+
+* TODO Consider hybrid approaches
+
+Some organizations use combinations:
+- Critical services in individual LXC
+- Non-critical services grouped
+- Development in single LXC
+
+* Related Topics
+
+- [[file:system-vs-application-containers.org][System vs Application Containers]]
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM Comparison]]
+- [[file:high-availability-setup.org][High Availability Setup]]
+- [[file:proxmox-containers-overview.org][Proxmox Overview]]

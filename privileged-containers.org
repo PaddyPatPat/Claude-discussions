@@ -1,0 +1,174 @@
+#+TITLE: Privileged Containers
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: containers security privileged podman docker
+
+* When Podman Requires Privileged Containers
+
+** Hardware and Device Access
+
+*** Direct Hardware Access
+
+- Interacting directly with hardware devices
+- Network interfaces
+- Specialized peripherals not exposed through standard device mapping
+
+*** GPU Access
+
+- Some GPU workloads require privileged access
+- Modern approaches like NVIDIA Container Runtime can often avoid this
+
+*** Network Interface Manipulation
+
+- Creating or modifying network interfaces
+- VLANs
+- Bridges from within container
+
+** System Administration Tasks
+
+*** Container-in-Container
+
+- Running Podman within a container (PINP - Podman in Podman)
+- Often requires privileged mode for system resource access
+
+*** System Monitoring Tools
+
+- Applications monitoring system-wide resources
+- Process monitoring beyond container namespace
+- Kernel information access
+
+*** Backup/Recovery Tools
+
+- Software accessing raw devices
+- Filesystem internals for backup operations
+
+** Filesystem and Storage Operations
+
+*** Mounting Filesystems
+
+- Operations requiring mounting/unmounting filesystems
+- Accessing block devices directly
+
+*** Loop Device Operations
+
+- Creating or manipulating loop devices
+- Disk image handling
+
+*** Advanced Storage Drivers
+
+- Some storage drivers require elevated privileges
+- Special filesystem operations
+
+** Security and Compliance Scanning
+
+*** Host System Scanning
+
+- Security scanners examining host system configuration
+- Installed packages analysis
+- Security posture assessment
+
+*** Compliance Auditing
+
+- Tools verifying system compliance
+- Examining kernel parameters
+- Loaded modules inspection
+- System configuration verification
+
+** Development and CI/CD
+
+*** Build Systems
+
+- Some build processes require kernel modifications
+- System-level access needs
+
+*** Testing Frameworks
+
+- Integration tests simulating system-level behaviors
+- Testing kernel interactions
+
+** Legacy Applications
+
+*** Applications Not Designed for Containers
+
+- Legacy software assuming full system access
+- Not properly containerized
+
+*** Initialization Systems
+
+- Applications expecting to function as PID 1
+- Managing system services
+
+* Security Implications
+
+** What Privileged Mode Disables
+
+A privileged container turns off security features that isolate container from host:
+
+- Dropped Capabilities
+- Limited devices
+- Read-only mount points
+- Apparmor/SELinux separation
+- Seccomp filters
+
+All are disabled in privileged mode.
+
+** Security Impact
+
+This breaks the containerization security model that both LXC and Podman provide.
+
+* Implications for Proxmox Setup
+
+** Strong Indicator for VM Use
+
+If applications require privileged containers, this is a strong indicator to use VMs instead of LXC containers.
+
+See [[file:lxc-vs-vm-for-containers.org][LXC vs VM Comparison]] for more details.
+
+** Layered Security Concerns
+
+Running privileged containers in LXC:
+- Breaks LXC isolation
+- Breaks container isolation
+- Potential security risk to host system
+
+* Alternatives to Privileged Containers
+
+** TODO Research rootless alternatives for common privileged use cases
+
+** Device Mapping
+
+Instead of full privileged access, map specific devices:
+
+#+BEGIN_SRC bash
+podman run --device=/dev/video0 mycontainer
+#+END_SRC
+
+** Capability Addition
+
+Add specific capabilities instead of full privileged mode:
+
+#+BEGIN_SRC bash
+podman run --cap-add=NET_ADMIN mycontainer
+#+END_SRC
+
+** Volume Mounts
+
+For filesystem access, use volume mounts with appropriate permissions:
+
+#+BEGIN_SRC bash
+podman run -v /host/path:/container/path:Z mycontainer
+#+END_SRC
+
+* Best Practices
+
+1. Avoid privileged containers when possible
+2. Use specific capabilities instead of full privileged mode
+3. Document why privileged access is needed
+4. Consider VM isolation for privileged workloads
+5. Regular security audits of privileged container usage
+
+* Related Topics
+
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM for Containers]]
+- [[file:podman-vs-docker.org][Podman vs Docker]]
+- [[file:architecture-patterns.org][Architecture Patterns]]

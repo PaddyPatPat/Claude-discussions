@@ -1,0 +1,194 @@
+#+TITLE: OCI Container Standards
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: oci standards containers interoperability
+
+* What is OCI?
+
+** Open Container Initiative
+
+- Industry consortium formed in 2015
+- Creates open standards for container formats and runtimes
+- Prevents vendor lock-in
+- Ensures interoperability between different container tools and platforms
+
+* OCI Specifications
+
+** Image Specification
+
+Defines how container images should be structured:
+
+*** Image Manifest Format
+- Metadata about the image
+- JSON-based format
+
+*** Image Configuration
+- How the container should run
+- Runtime parameters
+
+*** Layer Format
+- How filesystem layers are stored
+- Compression formats
+
+** Runtime Specification
+
+Defines how containers should be executed:
+
+*** Container Lifecycle Management
+- Creation, start, stop, deletion
+
+*** Resource Constraints and Isolation
+- CPU, memory, I/O limits
+- Namespace isolation
+
+*** Security Features
+- Capabilities
+- SELinux/AppArmor profiles
+
+** Distribution Specification
+
+Defines how container images are distributed across registries.
+
+* What Makes an Image OCI-Compliant?
+
+** Standard Format
+
+Uses standardized JSON manifest format to describe:
+- Image contents
+- Configuration
+- Metadata
+
+** Layered Filesystem
+
+- Organizes content in layers
+- Layers can be shared between images
+- Efficient caching
+
+** Portable Metadata
+
+Contains standardized configuration data:
+- Environment variables
+- Entry points
+- Working directories
+- Exposed ports
+- Volume mount points
+
+** Registry Compatibility
+
+Can be stored and retrieved from any OCI-compliant container registry.
+
+* Why OCI Matters
+
+** Tool Interoperability
+
+An image built with Docker can run with:
+- Podman
+- containerd
+- CRI-O
+- Any other OCI-compliant runtime
+
+** Registry Flexibility
+
+Push/pull images to/from:
+- Docker Hub
+- Quay.io
+- GitHub Container Registry
+- Any OCI-compliant registry
+
+** Future-Proofing
+
+Images not locked to specific vendor ecosystem.
+
+** Ecosystem Benefits
+
+Tools working with same image format:
+- Buildah (building images)
+- Skopeo (image operations)
+- Podman (running containers)
+- Docker (building and running)
+
+* Practical Example
+
+** Pulling an Image
+
+#+BEGIN_SRC bash
+# Using Docker
+docker pull nginx:latest
+
+# Using Podman
+podman pull nginx:latest
+
+# Both work with the same OCI-compliant image
+#+END_SRC
+
+** Running the Image
+
+#+BEGIN_SRC bash
+# With Docker
+docker run -d nginx:latest
+
+# With Podman
+podman run -d nginx:latest
+
+# Same image, different runtimes
+#+END_SRC
+
+** Inspecting Images
+
+#+BEGIN_SRC bash
+# View image layers and configuration
+podman inspect nginx:latest
+
+# Works with any OCI runtime
+#+END_SRC
+
+** Cross-Registry Operations
+
+#+BEGIN_SRC bash
+# Pull from Docker Hub
+podman pull docker.io/nginx:latest
+
+# Push to Quay.io
+podman tag nginx:latest quay.io/myuser/nginx:latest
+podman push quay.io/myuser/nginx:latest
+#+END_SRC
+
+* OCI vs Non-OCI Containers
+
+** OCI-Compliant
+
+- Docker containers
+- Podman containers
+- containerd containers
+- CRI-O containers
+
+** Not OCI-Compliant
+
+- Proxmox LXC containers (system containers)
+- LXD containers
+- systemd-nspawn containers
+
+See [[file:system-vs-application-containers.org][System vs Application Containers]] for the distinction.
+
+* Key Takeaway for Proxmox Setup
+
+When you find a "Docker container" online:
+- It's actually an OCI container
+- Not Docker-specific
+- Works with Podman
+- Works with any OCI runtime
+- This is why Docker-to-Podman transition is straightforward
+
+See [[file:podman-vs-docker.org][Podman vs Docker]] for migration details.
+
+* Related Topics
+
+- [[file:podman-vs-docker.org][Podman vs Docker Comparison]]
+- [[file:system-vs-application-containers.org][System vs Application Containers]]
+- [[file:proxmox-containers-overview.org][Proxmox Overview]]
+
+* References
+
+- OCI Website: https://opencontainers.org/
+- Image Specification: https://github.com/opencontainers/image-spec
+- Runtime Specification: https://github.com/opencontainers/runtime-spec

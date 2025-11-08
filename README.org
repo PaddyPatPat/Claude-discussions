@@ -1,0 +1,168 @@
+#+TITLE: Proxmox Container Documentation
+#+AUTHOR: Claude Discussion Archive
+#+DATE: 2025-11-08
+#+STARTUP: overview
+
+* Overview
+
+This documentation covers using application containers with Proxmox, focusing on open-source solutions with Podman and LXC containers.
+
+* Quick Navigation
+
+** Getting Started
+
+- [[file:proxmox-containers-overview.org][Proxmox Containers Overview]] - Start here for an introduction
+
+** Core Concepts
+
+- [[file:system-vs-application-containers.org][System vs Application Containers]] - Fundamental differences between LXC and OCI containers
+- [[file:oci-standards.org][OCI Standards]] - Understanding container image standards and interoperability
+- [[file:podman-vs-docker.org][Podman vs Docker]] - Comparison and migration guide
+
+** Technical Decisions
+
+- [[file:lxc-vs-vm-for-containers.org][LXC vs VM for Container Runtimes]] - When to use each approach
+- [[file:privileged-containers.org][Privileged Containers]] - When they're needed and security implications
+
+** Architecture and Design
+
+- [[file:architecture-patterns.org][Architecture Patterns]] - Different ways to organize containers in Proxmox
+- [[file:high-availability-setup.org][High Availability Setup]] - Multi-host HA configurations
+
+* Topic Map
+
+#+BEGIN_SRC
+                    Proxmox Containers Overview
+                              |
+                +-------------+-------------+
+                |                           |
+        Core Concepts              Technical Decisions
+                |                           |
+    +-----------+-----------+      +--------+--------+
+    |           |           |      |                 |
+System vs   Podman vs   OCI     LXC vs VM    Privileged
+  App       Docker    Standards               Containers
+                |
+                +--------------------+
+                                     |
+                           Architecture & Design
+                                     |
+                          +----------+----------+
+                          |                     |
+                   Architecture            High
+                    Patterns           Availability
+#+END_SRC
+
+* Files in This Repository
+
+| File | Description |
+|------+-------------|
+| [[file:proxmox-containers-overview.org][proxmox-containers-overview.org]] | Main entry point and overview |
+| [[file:system-vs-application-containers.org][system-vs-application-containers.org]] | Fundamental container concepts |
+| [[file:oci-standards.org][oci-standards.org]] | OCI compliance and standards |
+| [[file:podman-vs-docker.org][podman-vs-docker.org]] | Podman comparison and migration |
+| [[file:lxc-vs-vm-for-containers.org][lxc-vs-vm-for-containers.org]] | LXC vs VM decision guide |
+| [[file:privileged-containers.org][privileged-containers.org]] | Privileged container use cases |
+| [[file:architecture-patterns.org][architecture-patterns.org]] | Design patterns and trade-offs |
+| [[file:high-availability-setup.org][high-availability-setup.org]] | HA across multiple hosts |
+
+* Key Topics Covered
+
+** Container Technologies
+
+- Proxmox LXC containers (system containers)
+- Podman containers (OCI application containers)
+- Docker comparison
+- Container orchestration options
+
+** Design Considerations
+
+- Resource efficiency vs isolation
+- Security implications
+- Open source principles
+- Migration from Docker
+- Compliance requirements
+
+** Architecture Patterns
+
+- One Podman container per LXC container
+- Multiple Podman containers per LXC container
+- Grouped services by function/security/tenant
+- Trade-offs and decision frameworks
+
+** High Availability
+
+- Proxmox clustering
+- Load balancing strategies
+- Database replication
+- Container orchestration (Kubernetes/Nomad)
+- Monitoring and failover
+
+* Common Questions Answered
+
+** Why Podman over Docker?
+
+See [[file:podman-vs-docker.org][Podman vs Docker]] - covers rootless design, no daemon, pod support, and open-source compliance.
+
+** Should I use LXC or VM?
+
+See [[file:lxc-vs-vm-for-containers.org][LXC vs VM Comparison]] - explains when each is appropriate.
+
+** What's the difference between LXC and Podman containers?
+
+See [[file:system-vs-application-containers.org][System vs Application Containers]] - fundamental architectural differences.
+
+** Can I run Docker containers with Podman?
+
+See [[file:podman-vs-docker.org][Migration Guide]] in Podman vs Docker - 80-90% compatibility with minimal changes.
+
+** What are OCI-compliant containers?
+
+See [[file:oci-standards.org][OCI Standards]] - explains standardization and interoperability.
+
+** How do I achieve high availability?
+
+See [[file:high-availability-setup.org][High Availability Setup]] - multi-host configurations and layered HA approach.
+
+* Recommended Reading Path
+
+For someone new to this topic:
+
+1. Start with [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]
+2. Understand [[file:system-vs-application-containers.org][System vs Application Containers]]
+3. Learn about [[file:oci-standards.org][OCI Standards]]
+4. Compare [[file:podman-vs-docker.org][Podman vs Docker]]
+5. Decide [[file:lxc-vs-vm-for-containers.org][LXC vs VM]]
+6. Review [[file:architecture-patterns.org][Architecture Patterns]]
+7. If needed, study [[file:high-availability-setup.org][High Availability]]
+
+* TODO Items
+
+** TODO Research rootless alternatives for common privileged use cases
+
+See [[file:privileged-containers.org][Privileged Containers]] for context.
+
+** TODO Consider hybrid architecture approaches
+
+See [[file:architecture-patterns.org][Architecture Patterns]] - mixing patterns based on service criticality.
+
+** TODO Set up Proxmox cluster with shared storage
+** TODO Configure LXC container migration
+** TODO Deploy load balancer across multiple hosts
+** TODO Implement database replication
+** TODO Set up monitoring and alerting
+** TODO Test failover scenarios
+** TODO Document recovery procedures
+** TODO Create backup and restore procedures
+
+See [[file:high-availability-setup.org][High Availability Setup]] for implementation details.
+
+* Contributing
+
+These documents are based on a conversation about Proxmox container strategies with focus on:
+- Open source solutions
+- Security best practices
+- Resource efficiency
+- Practical trade-offs
+
+Feel free to expand these documents as you implement and learn from real-world experience.
