@@ -120,6 +120,26 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [multi-format-document-processing.md](multi-format-document-processing.md) - Format-specific parsers and unified processing for org-mode, Markdown, PDF, HTML, and EPUB documents.
 
+## NLP & Student Argument Analysis
+
+### NLP Tools & Libraries
+
+- [nlp-tools-comparison.org](nlp-tools-comparison.org) - Comprehensive comparison of NLP libraries (spaCy, NLTK, Transformers, Stanza, Gensim) with use cases, code examples, and recommendations by experience level.
+
+### Argument Mining Workflow
+
+- [nlp-student-argument-analysis.org](nlp-student-argument-analysis.org) - Complete methodology for analyzing student argumentative essays, including iterative NLP workflow, agreement/disagreement detection, and comparative discourse analysis techniques.
+
+### Infrastructure & Integration
+
+- [nlp-mcp-server-integration.org](nlp-mcp-server-integration.org) - MCP (Model Context Protocol) server architecture for exposing NLP tools, with implementation examples for document analysis, argument extraction, clustering, and disagreement detection.
+
+- [nlp-document-provenance-tracking.md](nlp-document-provenance-tracking.md) - Maintaining connections between source documents and NLP analysis results across multiple iterations using content hashing, SQLite/ChromaDB storage, and version tracking strategies.
+
+- [nlp-vector-store-integration.md](nlp-vector-store-integration.md) - Integrating ChromaDB and FAISS for storing and querying document embeddings, with performance comparisons, hybrid approaches, and hierarchical storage patterns.
+
+- [nlp-hierarchical-embeddings.md](nlp-hierarchical-embeddings.md) - Generating multi-level embeddings (document/section/paragraph/sentence), query routing strategies, cross-level analysis, and use cases for finding similar arguments and evidence extraction.
+
 ## Repository Purpose
 
 This repository serves as a knowledge base for:
@@ -131,5 +151,7 @@ This repository serves as a knowledge base for:
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems
 - Processing documents for vector embeddings and retrieval
+- Analyzing student argumentative essays with NLP techniques
+- Building MCP servers for NLP pipelines and document analysis
 
 All content has been extracted from actual conversations, deduplicated, and organized into focused single-topic files for easy reference.
