@@ -1,0 +1,482 @@
+#+TITLE: Magit Move Detection - Prototype Evolution Log
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit development-log changelog
+
+* Overview
+
+This document chronicles the iterative development of the Magit Move Detection prototype, tracking design decisions, bugs discovered, and improvements made through user testing.
+
+* Version 2.3 (Initial Working Prototype)
+
+** Release Date
+
+First working iteration after exploring Magit's section API and abandoning it for direct buffer parsing.
+
+** Key Features
+
+- Direct magit-status buffer text parsing
+- Basic hunk extraction (deleted vs added)
+- Simple common-prefix similarity algorithm
+- Debug output in =*Org-Roam Move Debug*= buffer
+
+** Implementation Approach
+
+*** Buffer Parsing
+
+#+BEGIN_SRC elisp
+(save-excursion
+  (goto-char (point-min))
+  (while (not (eobp))
+    (let ((line (buffer-substring-no-properties
+                (line-beginning-position)
+                (line-end-position))))
+      ;; Process each line
+      (forward-line 1))))
+#+END_SRC
+
+*** File Context Tracking
+
+#+BEGIN_SRC elisp
+(when (string-match "^modified[ \t]+\\(.+\\.org\\)" line)
+  (setq current-file (match-string 1 line)))
+#+END_SRC
+
+*** Line-by-Line Hunk Storage
+
+Each diff line stored as individual hunk:
+
+#+BEGIN_SRC elisp
+(when (string-match "^\\([-+]\\)\\(.*\\)" line)
+  (push (list :file current-file
+             :content (match-string 2 line)
+             :type (if (string= (match-string 1 line) "-")
+                      'deleted 'added)
+             :size (length (match-string 2 line)))
+        hunks))
+#+END_SRC
+
+** Known Issues
+
+### Issue 1: Single-Line Hunks Only
+
+Multi-line content moves treated as separate single-line hunks:
+
+#+BEGIN_SRC diff
+-** Test heading      # Hunk 1
+-And some text        # Hunk 2 (should be combined with hunk 1!)
+#+END_SRC
+
+**Impact**: Reduced matching accuracy, moves split across multiple hunks.
+
+### Issue 2: Poor Similarity Algorithm
+
+Common prefix matching fails on heading level changes:
+
+#+BEGIN_SRC elisp
+(common-prefix-similarity "** Test" "Test")
+;; => 0% (different first characters!)
+#+END_SRC
+
+**Impact**: Core use case (heading level changes) completely missed.
+
+### Issue 3: No Normalization
+
+Org-mode syntax not stripped before comparison:
+
+#+BEGIN_SRC elisp
+;; These should match but don't:
+"** Test heading"
+" Test heading"  ; Different prefix
+#+END_SRC
+
+**Impact**: Many legitimate moves undetected.
+
+** Test Results
+
+Given test case:
+
+#+BEGIN_SRC diff
+modified   file1.org
+-** Test file 1 subheading 1.
+-And some text.
+
+modified   file2.org
++** Test file 1 subheading 1.
++And some text.
+#+END_SRC
+
+**Result**: ❌ No moves detected (0% similarity due to algorithm)
+
+** Lessons Learned
+
+1. Need multi-line hunk grouping
+2. Common prefix algorithm unsuitable for org-mode
+3. Must normalize content before comparison
+
+* Version 2.4 (Multi-Line Hunks + Levenshtein)
+
+** Release Date
+
+After algorithm comparison and decision to use Levenshtein distance.
+
+** Improvements
+
+### 1. Multi-Line Hunk Grouping
+
+Group contiguous same-prefix lines:
+
+#+BEGIN_SRC elisp
+(let ((current-group '())
+      (current-prefix nil))
+
+  (cond
+   ;; Start new deletion group
+   ((and (string-prefix-p "-" line)
+         (not (string= current-prefix "-")))
+    (when current-group
+      (finalize-group))
+    (setq current-group (list line)
+          current-prefix "-"))
+
+   ;; Continue current group
+   ((string-prefix-p current-prefix line)
+    (push line current-group))
+
+   ;; End current group (context line)
+   (t
+    (when current-group
+      (finalize-group))
+    (setq current-group nil
+          current-prefix nil))))
+#+END_SRC
+
+### 2. Levenshtein Distance Algorithm
+
+Replaced common-prefix with edit distance:
+
+#+BEGIN_SRC elisp
+(defun levenshtein-distance (str1 str2)
+  "Calculate minimum edits to transform STR1 to STR2."
+  ;; Dynamic programming implementation
+  ;; O(n*m) complexity
+  ...)
+
+(defun levenshtein-similarity (str1 str2)
+  "Convert distance to similarity percentage."
+  (let ((dist (levenshtein-distance str1 str2))
+        (maxlen (max (length str1) (length str2))))
+    (* 100.0 (- 1.0 (/ (float dist) maxlen)))))
+#+END_SRC
+
+### 3. Org-Mode Normalization
+
+Strip heading markers before comparison:
+
+#+BEGIN_SRC elisp
+(defun org-roam-normalize-content (content)
+  "Normalize org-mode content for comparison."
+  (let ((normalized content))
+    ;; Remove heading asterisks
+    (setq normalized (replace-regexp-in-string
+                     "^\\*+ " "" normalized))
+    ;; Normalize whitespace
+    (setq normalized (replace-regexp-in-string
+                     "[ \t\n]+" " " normalized))
+    ;; Trim
+    (string-trim normalized)))
+#+END_SRC
+
+### 4. Enhanced Debug Output
+
+Added detailed logging:
+
+#+BEGIN_SRC text
+=== DELETED HUNKS (by size) ===
+File: file1.org | Size: 43 | Lines: 2
+Content: '** Test file 1 subheading 1.
+And some text.'
+
+=== ADDED HUNKS (by size) ===
+File: file2.org | Size: 44 | Lines: 3
+Content: '
+** Test file 1 subheading 1.
+And some text.'
+
+=== POTENTIAL MOVES (by size) ===
+MOVE: file1.org → file2.org
+Similarity: 100.0% | Size: 43
+Content: Test file 1 subheading 1.
+And some text.
+#+END_SRC
+
+## Test Results
+
+Given same test case as v2.3:
+
+**Result**: ✅ 100% similarity match detected!
+
+**Success Criteria Met**:
+- Multi-line hunks grouped correctly
+- Heading markers normalized
+- Move detected with perfect accuracy
+
+** Issues Discovered
+
+### Issue 1: Empty Line in Grouped Hunks
+
+Added hunk from file2.org includes empty line at start:
+
+#+BEGIN_SRC text
+Content: '
+** Test file 1 subheading 1.
+And some text.'
+#+END_SRC
+
+**Root Cause**: Diff format includes blank line, not filtered during grouping.
+
+**Impact**: Minor - normalization removes it, so similarity still 100%.
+
+### Issue 2: False Positive Warning
+
+System showed 60% match between unrelated hunks:
+
+#+BEGIN_SRC text
+MATCH FOUND: file1.org->file2.org (60.0%)
+'Test file 1 subheading 2.' vs 'Test file 1 subheading 1.\nAnd s'
+#+END_SRC
+
+**Root Cause**: Some word overlap, but below 85% threshold.
+
+**Impact**: None - correctly not reported as move.
+
+### Issue 3: Limited Debugging Visibility
+
+Only showing matches >50%, hard to see all comparisons:
+
+#+BEGIN_SRC elisp
+(when (> similarity 50)  ; Why 50? Should be configurable
+  (push ... debug-info))
+#+END_SRC
+
+**Impact**: Hard to debug edge cases.
+
+** Lessons Learned
+
+1. Empty line filtering needed
+2. Debug threshold should be lower for analysis
+3. Normalization working well
+4. 85% threshold appears well-calibrated
+
+* Version 2.5 (Empty Line Filtering + Enhanced Debugging)
+
+** Release Date
+
+Current version after v2.4 testing revealed minor issues.
+
+** Improvements
+
+### 1. Empty Line Filtering
+
+Filter whitespace-only lines when creating hunks:
+
+#+BEGIN_SRC elisp
+(defun org-roam-create-hunk-from-group (lines file type)
+  "Create hunk from grouped lines, filtering empty lines."
+  (let ((filtered-lines (seq-filter
+                         (lambda (line)
+                           (not (string-match-p "^[ \t]*$" line)))
+                         lines)))
+    (when filtered-lines
+      (let* ((content (mapconcat #'identity
+                                (reverse filtered-lines)
+                                "\n"))
+             (size (length content))
+             (line-count (length filtered-lines)))
+        (list :file file
+              :content content
+              :type type
+              :size size
+              :lines line-count)))))
+#+END_SRC
+
+### 2. Enhanced Comparison Tracking
+
+Separate debug section for all similarity comparisons:
+
+#+BEGIN_SRC elisp
+;; Show all comparisons >30% in dedicated section
+(insert "=== ALL SIMILARITY COMPARISONS ===\n\n")
+(dolist (comparison all-comparisons)
+  (insert (format "%s → %s: %.1f%%\n"
+                 (plist-get comparison :from)
+                 (plist-get comparison :to)
+                 (plist-get comparison :similarity))))
+#+END_SRC
+
+### 3. Improved Normalization
+
+Enhanced whitespace handling:
+
+#+BEGIN_SRC elisp
+(defun org-roam-normalize-content (content)
+  "Normalize with improved whitespace handling."
+  (let ((normalized content))
+    ;; Remove heading markers
+    (setq normalized (replace-regexp-in-string "^\\*+ " "" normalized))
+
+    ;; Collapse multiple spaces
+    (setq normalized (replace-regexp-in-string "[ \t]+" " " normalized))
+
+    ;; Reduce multiple newlines
+    (setq normalized (replace-regexp-in-string "\n\n+" "\n" normalized))
+
+    ;; Trim all whitespace
+    (string-trim normalized)))
+#+END_SRC
+
+### 4. Better Debug Categorization
+
+Separated parsing debug from comparison debug:
+
+#+BEGIN_SRC text
+=== DEBUG LOG ===
+(Parsing operations only)
+
+=== ALL SIMILARITY COMPARISONS ===
+(All comparisons >30% similarity)
+
+=== POTENTIAL MOVES (by size) ===
+(High-confidence >85% only)
+#+END_SRC
+
+## Expected Improvements
+
+1. ✅ No empty lines in hunk content
+2. ✅ Better visibility into all comparisons
+3. ✅ Cleaner debug output organization
+4. ✅ More robust normalization
+
+## Pending Testing
+
+Awaiting user test results with same test case to confirm:
+- Empty line issue resolved
+- Debug output more useful
+- No regression in detection accuracy
+
+* Development Patterns Observed
+
+** Iterative Refinement Works Well
+
+Each version addressed specific issues discovered through testing:
+
+- v2.3 → v2.4: Core algorithm inadequacy
+- v2.4 → v2.5: Output quality issues
+
+** Test-Driven Development
+
+Real test case with magit-status output proved invaluable:
+
+#+BEGIN_SRC diff
+# This real-world example drove all decisions:
+modified   file1.org
+-** Test file 1 subheading 1.
+-And some text.
+
+modified   file2.org
++** Test file 1 subheading 1.
++And some text.
+#+END_SRC
+
+** User Feedback Critical
+
+User observations about:
+- Empty lines in output
+- Wanting to see all comparisons
+- Need for better debug categorization
+
+Led directly to v2.5 improvements.
+
+** Debugging Infrastructure Investment
+
+Adding comprehensive debug output (version numbers, detailed logs, categorized sections) paid off in faster iteration.
+
+* Known Limitations (All Versions)
+
+** Performance Not Optimized
+
+Current O(N² × D × A × L²) complexity acceptable for small repos but may struggle with:
+- >50 modified files
+- >20 hunks per file
+- Very long hunks (>500 chars)
+
+** No Magit Integration
+
+Still using separate debug buffer instead of custom magit section.
+
+** No Staging Commands
+
+User must manually stage related files.
+
+** Configuration Hardcoded
+
+Threshold (85%), algorithms, and display options not user-configurable.
+
+** Single Similarity Algorithm
+
+Only Levenshtein distance implemented, no hybrid or token-based options.
+
+* Future Development Roadmap
+
+** Phase 1: Integration (Immediate Next Steps)
+
+1. Replace debug buffer with custom magit-status section
+2. Add magit-status-refresh-hook integration
+3. Implement section collapsing/expanding
+
+** Phase 2: User Interaction
+
+1. Add keybindings for staging file pairs
+2. Implement auto-generated commit messages
+3. Support partial staging of moves
+
+** Phase 3: Performance
+
+1. Add early termination for low-similarity pairs
+2. Implement caching of normalization and similarity
+3. Limit comparisons to recently modified files
+
+** Phase 4: Configuration
+
+1. Expose customization variables
+2. Add similarity algorithm choice
+3. Allow threshold tuning
+
+** Phase 5: Advanced Features
+
+1. Medium-confidence section (50-85%)
+2. Token-based similarity as secondary metric
+3. Support for staged file comparison
+4. Move tracking across commits
+
+* Versioning Strategy
+
+** Semantic Versioning (Planned)
+
+- **Major** (3.0): Magit integration complete
+- **Minor** (2.x): Feature additions (algorithms, commands)
+- **Patch** (2.x.y): Bug fixes and refinements
+
+** Current Status
+
+Version 2.5 = "Working prototype, not yet integrated"
+
+Version 3.0 will mark first integrated release.
+
+* Related Documentation
+
+- [[file:magit-orgmode-move-detection-project.org][Project Overview]]
+- [[file:magit-move-detection-requirements.org][Functional Requirements]]
+- [[file:magit-move-detection-technical-architecture.org][Technical Architecture]]
+- [[file:magit-move-detection-similarity-algorithms.org][Similarity Algorithm Comparison]]
+- [[file:magit-buffer-parsing-debugging.org][Earlier Magit Buffer Parsing Exploration]]

@@ -44,6 +44,20 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [magit-buffer-parsing-debugging.org](magit-buffer-parsing-debugging.org) - Chronicles iterative prototype development, debugging techniques, common pitfalls, and lessons learned from parsing magit-status buffers.
 
+#### Magit Move Detection Project
+
+- [magit-orgmode-move-detection-project.org](magit-orgmode-move-detection-project.org) - Complete project overview for detecting content moves between org-roam files, with goals, scope, design decisions, and success criteria.
+
+- [magit-move-detection-requirements.org](magit-move-detection-requirements.org) - Detailed functional requirements including content move definitions, detection timing, hunk grouping rules, and user interface specifications.
+
+- [magit-move-detection-technical-architecture.org](magit-move-detection-technical-architecture.org) - Technical implementation details covering buffer parsing, hunk grouping, Levenshtein distance algorithm, and performance considerations.
+
+- [magit-move-detection-similarity-algorithms.org](magit-move-detection-similarity-algorithms.org) - Comprehensive comparison of text similarity algorithms (prefix matching, Levenshtein, token-based, hybrid) with examples and performance analysis.
+
+- [magit-move-detection-prototype-evolution.org](magit-move-detection-prototype-evolution.org) - Development log tracking versions 2.3 through 2.5, documenting bugs found, improvements made, and lessons learned through user testing.
+
+- [magit-move-detection.el](magit-move-detection.el) - Working Elisp prototype (v2.5) implementing multi-line hunk grouping, Levenshtein similarity matching, and org-mode normalization.
+
 ### Development Tools
 
 - [development-tool-installation-strategies.md](development-tool-installation-strategies.md) - Explains why project-specific npm/pip installation prevents version conflicts and ensures team consistency.
