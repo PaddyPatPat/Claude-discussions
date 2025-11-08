@@ -1,0 +1,129 @@
+#+TITLE: Ray with Apple Silicon GPU Support
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray apple-silicon mps metal gpu mlx pytorch
+
+* Overview
+
+This document clarifies Ray's support for Apple Silicon GPUs and what frameworks can leverage Metal Performance Shaders (MPS) through Ray.
+
+* Important Clarification
+
+** Ray vs Individual ML Libraries
+
+- *Ray itself* can absolutely run on Apple Silicon and coordinate distributed workloads across your cluster
+- The limitation is in *specific ML libraries* like vLLM that don't support Apple's Metal GPU framework
+- This doesn't mean Ray can't use Apple Silicon GPUs at all
+
+* ML Frameworks Supporting Apple Silicon GPUs
+
+The following frameworks DO support Apple Silicon GPUs through Metal Performance Shaders (MPS):
+
+** PyTorch with MPS Backend
+
+Full GPU acceleration for PyTorch models
+
+#+BEGIN_SRC python
+import torch
+
+# Check if MPS is available
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+    model = model.to(device)
+#+END_SRC
+
+** TensorFlow with Metal
+
+TensorFlow operations on Apple GPUs
+
+** MLX
+
+Apple's own ML framework optimized for Apple Silicon
+- Native Apple Silicon support
+- Efficient GPU utilization
+- Designed specifically for Apple hardware
+
+** Core ML
+
+Apple's native ML framework
+
+** Transformers Library
+
+Supports MPS backend for many models
+
+** JAX with Metal
+
+Google's JAX framework has Metal support
+
+* Ray + Apple Silicon GPUs
+
+You can absolutely use Ray to orchestrate GPU workloads on Apple Silicon by:
+
+** Ray Actors Running PyTorch with MPS
+
+#+BEGIN_SRC python
+import ray
+
+@ray.remote(num_gpus=1)  # Ray will manage the "GPU" resource
+class AppleSiliconInference:
+    def __init__(self):
+        import torch
+        self.device = torch.device("mps")  # Metal Performance Shaders
+        self.model = load_model().to(self.device)
+
+    def predict(self, input_data):
+        # Model inference on Apple Silicon GPU
+        return self.model(input_data)
+#+END_SRC
+
+** Ray Managing MLX Workloads
+
+#+BEGIN_SRC python
+import ray
+
+@ray.remote
+class MLXWorker:
+    def __init__(self):
+        import mlx.core as mx
+        # MLX automatically uses Apple Silicon GPU
+        self.model = self.load_mlx_model()
+
+    def load_mlx_model(self):
+        # MLX model loading code
+        pass
+#+END_SRC
+
+* Framework Comparison
+
+** Apple Silicon Macs CAN Handle
+
+- PyTorch inference with MPS backend (distributed via Ray)
+- MLX-based workloads (Apple's optimized framework)
+- TensorFlow with Metal backend
+- Transformers models with MPS support
+
+** Linux+NVIDIA Still Better For
+
+- vLLM specifically (since it doesn't support Metal)
+- CUDA-specific libraries
+- Libraries requiring NVIDIA's ecosystem
+
+* Practical Implementation
+
+Your heterogeneous cluster can leverage Apple Silicon GPUs by:
+
+1. Using Ray to coordinate across both node types
+2. Running PyTorch/MLX/TensorFlow GPU workloads on Mac nodes
+3. Running vLLM and CUDA-specific workloads on Linux nodes
+4. Letting Ray's scheduler distribute tasks based on resource requirements and library compatibility
+
+* Summary
+
+*No, Ray doesn't prevent you from using Apple Silicon GPUs* - it's specific libraries like vLLM that have this limitation. Ray can absolutely coordinate and distribute GPU workloads to Apple Silicon using compatible frameworks.
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration with Ray]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]

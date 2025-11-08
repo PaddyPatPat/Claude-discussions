@@ -1,0 +1,409 @@
+#+TITLE: Ray with Proxmox GPU Passthrough
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray proxmox gpu-passthrough nvidia virtualization
+
+* Overview
+
+This document covers the optimal architecture for deploying Ray on Proxmox Virtual Environment with NVIDIA GPU passthrough, specifically for home lab environments.
+
+* Key Architectural Decision: Separate Head Node from GPU Resources
+
+** Recommended Architecture
+
+*Create TWO virtual machines on each GPU-equipped Proxmox host:*
+
+1. *Head Node VM* - No GPU passthrough
+2. *GPU Worker VM* - All GPUs passed through
+
+** Rationale
+
+*** Ray Best Practices
+
+From Ray documentation: You can start a Ray head node with 0 logical CPUs via:
+
+#+BEGIN_SRC bash
+ray start --head --num-cpus=0
+#+END_SRC
+
+This reserves the head node for running Ray system processes. For large clusters, it's recommended to set the quantity of logical CPU resources to 0 on the head node to avoid scheduling additional tasks on it.
+
+*** Proxmox GPU Passthrough Limitations
+
+- If you "PCI passthrough" a device, the device is not available to the host anymore
+- VMs with passed-through devices cannot be migrated
+- This creates operational constraints for your head node
+
+*** Operational Benefits
+
+- *Head node can be migrated* between Proxmox hosts if needed
+- *GPU resources are dedicated* purely to compute workloads
+- *Better resource isolation* and management
+- *Easier troubleshooting* and maintenance
+- *Simpler backups* and snapshots for head node
+
+* Head Node VM Configuration
+
+** Resource Allocation
+
+- *CPU*: 4-8 cores (for Ray system processes)
+- *RAM*: 8-16GB
+- *Disk*: 50GB
+- *GPU*: None (no passthrough)
+- *Network*: Bridged networking
+
+** Purpose and Role
+
+- Pure coordination and scheduling
+- Ray dashboard hosting
+- Object store management
+- Task distribution
+- Cluster state management
+- No actual workload computation
+
+** Installation
+
+#+BEGIN_SRC bash
+# On head node VM
+sudo apt update
+sudo apt install -y python3-pip
+
+# Install Ray
+pip3 install ray
+
+# Start head node with zero CPU resources
+ray start --head --num-cpus=0 --port=6379
+#+END_SRC
+
+** Configuration
+
+#+BEGIN_SRC bash
+# Start Ray head node
+ray start \
+  --head \
+  --num-cpus=0 \
+  --port=6379 \
+  --dashboard-host=0.0.0.0 \
+  --dashboard-port=8265
+#+END_SRC
+
+* GPU Worker VM Configuration
+
+** Resource Allocation
+
+- *CPU*: Remaining cores (leave 2-4 for Proxmox host)
+- *RAM*: Remaining RAM (leave 8-16GB for Proxmox host)
+- *Disk*: 100GB+ (for models and data)
+- *GPU*: All NVIDIA GPUs via PCI passthrough
+- *Network*: Bridged networking (same subnet as head node)
+
+** Purpose and Role
+
+- GPU compute workloads only
+- Model inference and training
+- CUDA operations
+- No coordination responsibilities
+
+** Proxmox GPU Passthrough Setup
+
+*** Enable IOMMU
+
+Edit =/etc/default/grub=:
+
+For Intel CPUs:
+#+BEGIN_SRC conf
+GRUB_CMDLINE_LINUX_DEFAULT="quiet intel_iommu=on iommu=pt"
+#+END_SRC
+
+For AMD CPUs:
+#+BEGIN_SRC conf
+GRUB_CMDLINE_LINUX_DEFAULT="quiet amd_iommu=on iommu=pt"
+#+END_SRC
+
+Update grub:
+#+BEGIN_SRC bash
+update-grub
+reboot
+#+END_SRC
+
+*** Load VFIO Modules
+
+Edit =/etc/modules=:
+#+BEGIN_SRC conf
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+#+END_SRC
+
+Update initramfs:
+#+BEGIN_SRC bash
+update-initramfs -u -k all
+reboot
+#+END_SRC
+
+*** Add GPU to VM
+
+In Proxmox web interface:
+1. Select the GPU worker VM
+2. Hardware → Add → PCI Device
+3. Select your NVIDIA GPU(s)
+4. Enable "All Functions" and "Primary GPU" if needed
+5. Enable "PCI-Express"
+
+** NVIDIA Driver Installation in VM
+
+#+BEGIN_SRC bash
+# Update system
+sudo apt update
+sudo apt upgrade -y
+
+# Install kernel headers
+sudo apt install -y linux-headers-$(uname -r)
+
+# Install NVIDIA drivers
+sudo apt install -y nvidia-driver-535 nvidia-utils-535
+
+# Reboot
+sudo reboot
+
+# Verify GPU detection
+nvidia-smi
+#+END_SRC
+
+** CUDA Toolkit Installation
+
+#+BEGIN_SRC bash
+# Install CUDA toolkit
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+sudo apt install -y cuda-toolkit-12-3
+
+# Add to PATH
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify CUDA
+nvcc --version
+#+END_SRC
+
+** Ray Installation with GPU Support
+
+#+BEGIN_SRC bash
+# Install Ray
+pip3 install ray
+
+# Install PyTorch with CUDA support
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Connect to head node
+ray start --address='<head-node-ip>:6379'
+#+END_SRC
+
+* Multi-GPU Passthrough Strategy
+
+** Single VM per Host (Recommended)
+
+*** Configuration
+
+Pass ALL GPUs from the Proxmox host to ONE worker VM.
+
+*** Example: Host with 4 GPUs
+
+- *Head Node VM*: 8 CPU cores, 16GB RAM, no GPU
+- *GPU Worker VM*: Remaining cores, remaining RAM, all 4 GPUs
+
+*** Benefits
+
+- *GPU Memory Sharing*: Multiple GPUs in one VM can share system memory more efficiently
+- *Lower Latency*: No inter-VM communication overhead for multi-GPU tasks
+- *Better Scheduling*: Ray can optimize GPU utilization across all cards in the worker
+- *Unified Driver Stack*: Single CUDA runtime manages all GPUs
+- *Simpler Management*: One VM to maintain per Proxmox host
+- *Resource Efficiency*: Better CPU and RAM utilization
+- *Reduced Network Overhead*: No network communication between GPUs
+
+*** Ray Configuration
+
+#+BEGIN_SRC python
+import ray
+
+# Ray automatically detects all GPUs in the worker VM
+@ray.remote(num_gpus=1)
+class SingleGPUActor:
+    def __init__(self):
+        import torch
+        # Ray assigns this actor to one of the available GPUs
+        self.device = torch.device("cuda")
+
+# Multi-GPU actor
+@ray.remote(num_gpus=2)
+class MultiGPUActor:
+    def __init__(self):
+        import torch
+        # This actor uses 2 GPUs from the worker VM
+        self.model = torch.nn.DataParallel(self.load_model())
+#+END_SRC
+
+** Alternative: Multiple VMs per Host (Not Recommended)
+
+*** Issues
+
+- Cannot passthrough the same GPU to multiple VMs simultaneously
+- Potential conflicts when starting VMs with GPU passthrough
+- Higher inter-VM communication overhead
+- More complex management
+
+* Hardware-Specific Configurations
+
+** GeForce GPU Hosts
+
+Typical configuration: 2-4 consumer GPUs
+
+*** Head Node VM
+- 8 CPU cores
+- 16GB RAM
+- 50GB disk
+
+*** GPU Worker VM
+- 16 CPU cores (leave 4 for host)
+- 48GB RAM (leave 16GB for host)
+- 200GB disk
+- 2-4 GeForce GPUs via passthrough
+
+** Quadro GPU Hosts
+
+Typical configuration: 4-8 workstation GPUs
+
+*** Head Node VM
+- 8 CPU cores
+- 16GB RAM
+- 50GB disk
+
+*** GPU Worker VM
+- 24 CPU cores (leave 4 for host)
+- 112GB RAM (leave 16GB for host)
+- 500GB disk
+- 4-8 Quadro GPUs via passthrough
+
+* Network Configuration in Proxmox
+
+** Bridge Networking
+
+Both VMs on the same bridge (e.g., vmbr0):
+
+#+BEGIN_SRC conf
+# Head Node VM network config
+net0: virtio=XX:XX:XX:XX:XX:XX,bridge=vmbr0
+
+# GPU Worker VM network config
+net0: virtio=YY:YY:YY:YY:YY:YY,bridge=vmbr0
+#+END_SRC
+
+** Firewall Rules
+
+Ensure Ray ports are open:
+- 6379: Redis (Ray head node)
+- 8265: Ray Dashboard
+- 10001: Ray client server
+- 8000-8999: Worker node ports
+
+* Cluster Deployment with Multiple Proxmox Hosts
+
+** Single Head Node Architecture
+
+#+BEGIN_EXAMPLE
+[Proxmox Host 1]
+  ├── Head Node VM (no GPU)
+  └── GPU Worker VM (all GPUs)
+
+[Proxmox Host 2]
+  └── GPU Worker VM (all GPUs)
+
+[Proxmox Host 3]
+  └── GPU Worker VM (all GPUs)
+#+END_EXAMPLE
+
+** Multi-Head Node HA Architecture
+
+For production environments requiring high availability:
+
+#+BEGIN_EXAMPLE
+[Proxmox Host 1]
+  ├── Head Node VM 1 (no GPU)
+  └── GPU Worker VM (all GPUs)
+
+[Proxmox Host 2]
+  ├── Head Node VM 2 (no GPU, standby)
+  └── GPU Worker VM (all GPUs)
+
+[Proxmox Host 3]
+  └── GPU Worker VM (all GPUs)
+#+END_EXAMPLE
+
+* Verification and Testing
+
+** Verify GPU Detection
+
+On GPU worker VM:
+#+BEGIN_SRC bash
+nvidia-smi
+#+END_SRC
+
+** Verify Ray GPU Detection
+
+#+BEGIN_SRC python
+import ray
+ray.init()
+print(ray.cluster_resources())
+# Should show: {'CPU': X, 'GPU': Y, ...}
+#+END_SRC
+
+** Test GPU Workload
+
+#+BEGIN_SRC python
+import ray
+import torch
+
+@ray.remote(num_gpus=1)
+def gpu_test():
+    return torch.cuda.is_available(), torch.cuda.device_count()
+
+# Should return (True, <number_of_gpus>)
+result = ray.get(gpu_test.remote())
+print(result)
+#+END_SRC
+
+* Backup and Disaster Recovery
+
+** Head Node VM
+
+- *Regular snapshots* in Proxmox
+- *Easy restoration* without GPU dependencies
+- *Can be migrated* to other Proxmox hosts
+- *Export/import* VM configuration
+
+** GPU Worker VM
+
+- *Shutdown before backup* to ensure consistency
+- *Snapshot with caution* (large disk sizes)
+- *Document GPU passthrough configuration*
+- *Cannot be migrated* while GPUs are attached
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration with Ray]]
+- [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]
+- [[file:high-availability-setup.org][High Availability Setup]]
+
+* TODO Tasks
+
+** TODO Test Ray head node with num-cpus=0 configuration
+** TODO Verify GPU passthrough with multiple NVIDIA GPUs
+** TODO Document backup procedures for GPU worker VMs
+** TODO Test VM migration scenarios for head node

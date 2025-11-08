@@ -1,0 +1,265 @@
+#+TITLE: Ray with MLX and CUDA Integration
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray mlx cuda apple-silicon nvidia gpu
+
+* Overview
+
+This document covers the integration of MLX (for Apple Silicon) and CUDA (for NVIDIA GPUs) within a Ray distributed computing environment, specifically for home lab deployments.
+
+*Note*: This guide excludes vLLM, as it does not support Apple Silicon GPUs.
+
+* Architecture Design Principles
+
+** Optimal Role Distribution
+
+*** Apple Silicon Macs (MLX-focused nodes)
+
+- MLX-based model inference
+- PyTorch with MPS backend workloads
+- TensorFlow with Metal backend
+- Data preprocessing and ingestion tasks
+- CPU-intensive inference workloads
+- Orchestration and coordination roles
+- Web serving and API endpoints
+- File I/O and networking operations
+
+*** Linux + NVIDIA GPU Machines (CUDA-focused)
+
+- CUDA-accelerated inference
+- Model training and fine-tuning
+- Computer vision tasks
+- Vector computations and embeddings
+- PyTorch with CUDA backend
+- TensorFlow with CUDA support
+
+* MLX Integration on Apple Silicon
+
+** What is MLX?
+
+MLX is Apple's ML framework optimized for Apple Silicon, providing:
+- Native GPU acceleration via Metal
+- Efficient memory utilization
+- Seamless integration with Apple's unified memory architecture
+
+** Ray Actor with MLX
+
+#+BEGIN_SRC python
+import ray
+import mlx.core as mx
+import mlx.nn as nn
+
+@ray.remote(num_cpus=2)
+class MLXInferenceActor:
+    def __init__(self, model_path):
+        # MLX automatically uses Apple Silicon GPU
+        self.model = self.load_model(model_path)
+
+    def load_model(self, model_path):
+        # Load MLX model
+        # MLX models run on GPU by default
+        return mx.load(model_path)
+
+    def predict(self, input_data):
+        # Inference automatically runs on Apple Silicon GPU
+        return self.model(input_data)
+
+# Deploy on Apple Silicon node
+mlx_actor = MLXInferenceActor.remote("/path/to/model")
+result = ray.get(mlx_actor.predict.remote(data))
+#+END_SRC
+
+** PyTorch with MPS on Apple Silicon
+
+#+BEGIN_SRC python
+import ray
+import torch
+
+@ray.remote(num_gpus=1)
+class PyTorchMPSActor:
+    def __init__(self):
+        if torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
+
+        self.model = self.load_model().to(self.device)
+
+    def load_model(self):
+        # Load your PyTorch model
+        import transformers
+        return transformers.AutoModel.from_pretrained("model-name")
+
+    def inference(self, input_tensor):
+        input_tensor = input_tensor.to(self.device)
+        with torch.no_grad():
+            return self.model(input_tensor)
+#+END_SRC
+
+* CUDA Integration on Linux
+
+** Ray Actor with CUDA
+
+#+BEGIN_SRC python
+import ray
+import torch
+
+@ray.remote(num_gpus=1)
+class CUDAInferenceActor:
+    def __init__(self, model_path, gpu_id=0):
+        self.device = torch.device(f"cuda:{gpu_id}")
+        self.model = self.load_model(model_path).to(self.device)
+
+    def load_model(self, model_path):
+        # Load PyTorch model
+        return torch.load(model_path)
+
+    def predict(self, input_data):
+        input_tensor = torch.tensor(input_data).to(self.device)
+        with torch.no_grad():
+            return self.model(input_tensor).cpu().numpy()
+
+# Deploy on NVIDIA GPU node
+cuda_actor = CUDAInferenceActor.remote("/path/to/model")
+result = ray.get(cuda_actor.predict.remote(data))
+#+END_SRC
+
+** Multi-GPU CUDA Configuration
+
+#+BEGIN_SRC python
+import ray
+
+@ray.remote(num_gpus=2)
+class MultiGPUTrainer:
+    def __init__(self):
+        import torch.nn as nn
+        import torch.distributed as dist
+
+        # Initialize distributed training
+        self.setup_distributed()
+        self.model = nn.DataParallel(self.load_model())
+
+    def setup_distributed(self):
+        # Configure multi-GPU setup
+        pass
+
+    def train(self, data):
+        # Training across multiple GPUs
+        pass
+#+END_SRC
+
+* Heterogeneous Cluster Resource Management
+
+** Resource Specification
+
+#+BEGIN_SRC python
+import ray
+
+# Initialize Ray with custom resources
+ray.init(
+    resources={
+        "MLX": 1,      # For Apple Silicon nodes
+        "CUDA": 4,     # For NVIDIA GPU nodes
+    }
+)
+
+# MLX-specific actor
+@ray.remote(resources={"MLX": 1})
+class MLXWorker:
+    pass
+
+# CUDA-specific actor
+@ray.remote(num_gpus=1, resources={"CUDA": 1})
+class CUDAWorker:
+    pass
+#+END_SRC
+
+** Workload Routing
+
+#+BEGIN_SRC python
+import ray
+
+def route_inference(data, model_type):
+    """Route inference to appropriate hardware"""
+    if model_type == "mlx":
+        # Route to Apple Silicon node
+        actor = MLXInferenceActor.remote(model_path)
+    elif model_type == "cuda":
+        # Route to NVIDIA GPU node
+        actor = CUDAInferenceActor.remote(model_path)
+
+    return ray.get(actor.predict.remote(data))
+#+END_SRC
+
+* Performance Optimization
+
+** Apple Silicon Optimization
+
+- Use MLX native operations for best performance
+- Leverage unified memory architecture
+- Batch processing where appropriate
+- Use Metal-optimized libraries
+
+** NVIDIA GPU Optimization
+
+- Use CUDA kernels for compute-intensive operations
+- Implement tensor parallelism for large models
+- Leverage cuDNN for deep learning operations
+- Optimize memory transfers between CPU and GPU
+
+* Framework Selection Guide
+
+** Use MLX When
+
+- Deploying on Apple Silicon hardware
+- Need tight integration with macOS ecosystem
+- Want optimal performance on Apple hardware
+- Working with models optimized for MLX
+
+** Use PyTorch with MPS When
+
+- Need cross-platform compatibility
+- Using existing PyTorch models
+- Want broader ecosystem support
+- Require HuggingFace transformers integration
+
+** Use CUDA When
+
+- Deploying on NVIDIA GPUs
+- Need maximum ecosystem support
+- Using CUDA-specific libraries
+- Require tensor/pipeline parallelism
+
+* Practical Example: Hybrid Inference Pipeline
+
+#+BEGIN_SRC python
+import ray
+
+@ray.remote(resources={"MLX": 1})
+class MLXPreprocessor:
+    def preprocess(self, raw_data):
+        # Fast preprocessing on Apple Silicon
+        return processed_data
+
+@ray.remote(num_gpus=1, resources={"CUDA": 1})
+class CUDAInference:
+    def infer(self, processed_data):
+        # Heavy inference on NVIDIA GPU
+        return results
+
+# Hybrid pipeline
+preprocessor = MLXPreprocessor.remote()
+inference = CUDAInference.remote()
+
+# Data flows: Apple Silicon (preprocess) -> NVIDIA (inference)
+processed = preprocessor.preprocess.remote(raw_data)
+results = inference.infer.remote(processed)
+final = ray.get(results)
+#+END_SRC
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-apple-silicon-gpu-support.org][Ray with Apple Silicon GPU Support]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]

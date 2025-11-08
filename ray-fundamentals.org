@@ -1,0 +1,118 @@
+#+TITLE: Ray Distributed Computing - Fundamentals
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray distributed-computing stateless stateful actors
+
+* Overview
+
+Ray is a distributed computing framework with the tagline: "Ray's backbone is its ability to efficiently manage stateless functions and stateful actors across a distributed cluster, enabling parallel computation with minimal overhead."
+
+This document covers the fundamental concepts of Ray's architecture.
+
+* Core Concepts
+
+** Stateless Functions
+
+A stateless function is a function that doesn't retain any information between calls - it has no "memory" of previous executions.
+
+*** Characteristics
+
+- Only uses the inputs provided
+- Produces the same output for the same inputs (deterministic)
+- Doesn't modify or depend on any external variables or stored data
+- Once it finishes, it leaves no trace behind
+
+*** Example
+
+Think of a simple math function like =add(x, y)= that returns =x + y=. No matter how many times you call =add(3, 5)=, it will always return 8, and calling it doesn't affect future calls.
+
+*** Implementation in Ray
+
+In Ray, stateless functions are implemented as "tasks" - lightweight computations that can be easily distributed across multiple machines because they don't need to coordinate with each other or share state.
+
+** Stateful Actors
+
+A stateful actor is like a persistent object that maintains internal state between method calls.
+
+*** Characteristics
+
+- Internal variables that persist across method invocations
+- The ability to modify its own state over time
+- Memory of past interactions
+
+*** Example
+
+Think of a bank account object - it remembers your current balance, and each deposit or withdrawal operation changes that internal state for future operations.
+
+*** Implementation in Ray
+
+In Ray, actors are long-running processes that can maintain state and handle multiple method calls over their lifetime.
+
+*** Common Use Cases
+
+- Machine learning models that need to keep parameters in memory
+- Databases or caches that store data
+- Services that need to maintain connections or configuration
+
+* Remote Actors
+
+** Innovation
+
+A pivotal feature that sets Ray apart is its innovative use of remote actors. This mechanism transforms conventional Python classes into entities that can live and operate across the distributed system.
+
+** Conventional Python Classes
+
+Normally, when you create a Python class and instantiate objects from it, those objects exist only on the local machine where your Python process is running.
+
+#+BEGIN_SRC python
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def increment(self):
+        self.count += 1
+        return self.count
+
+# This object lives only on your local machine
+counter = Counter()
+#+END_SRC
+
+** Ray's Transformation
+
+Ray allows you to take that exact same class and, with minimal changes (just adding a decorator), transform it into a "remote actor" that can:
+
+- Live on different machines: The object can be instantiated on any node in your distributed cluster, not just your local machine
+- Operate across the distributed system: You can call methods on this object from anywhere in the cluster
+- Maintain state persistently: The object keeps its state alive even while serving requests from multiple different machines
+
+** What "Entities" Means
+
+By "entities," Ray means these objects become independent, persistent participants in the distributed system. They're not just temporary computations - they're long-living services that can:
+
+- Handle multiple requests over time
+- Maintain their internal state
+- Be referenced and called from anywhere in the cluster
+- Run independently on remote machines
+
+** Developer Experience
+
+The "innovative" aspect is that Ray makes this transformation almost transparent to the programmer. You write normal Python classes, add Ray decorators, and suddenly those classes can be distributed across multiple machines while maintaining all their original functionality.
+
+This bridges the gap between writing simple local code and complex distributed systems. Instead of needing to learn entirely new distributed computing frameworks, Python developers can leverage their existing knowledge of classes and objects in a distributed context.
+
+* Why Both Matter in Ray
+
+Ray's power comes from efficiently orchestrating both:
+
+- Stateless tasks for parallel computation (like processing items in a list)
+- Stateful actors for services that need persistence (like parameter servers in distributed ML)
+
+This combination allows Ray to handle both:
+- Simple parallel workloads
+- Complex distributed applications that need coordination and shared state
+
+* Related Topics
+
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration with Ray]]

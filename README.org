@@ -1,31 +1,46 @@
-#+TITLE: Proxmox Container Documentation
+#+TITLE: Claude Discussions Archive
 #+AUTHOR: Claude Discussion Archive
 #+DATE: 2025-11-08
 #+STARTUP: overview
 
 * Overview
 
-This documentation covers using application containers with Proxmox, focusing on open-source solutions with Podman and LXC containers.
+This repository contains documentation from Claude conversations covering:
+- Ray distributed computing for home lab environments
+- Proxmox containerization strategies with open-source solutions
 
 * Quick Navigation
 
-** Getting Started
+** Ray Distributed Computing
 
+*** Getting Started
+- [[file:ray-fundamentals.org][Ray Fundamentals]] - Core concepts: stateless functions and stateful actors
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]] - Step-by-step setup for heterogeneous hardware
+
+*** Architecture and Integration
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]] - Apple Silicon + NVIDIA GPU clusters
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration]] - Framework integration for different hardware
+- [[file:ray-apple-silicon-gpu-support.org][Apple Silicon GPU Support]] - Using MPS and MLX with Ray
+- [[file:ray-proxmox-gpu-passthrough.org][Proxmox GPU Passthrough for Ray]] - VM configuration and multi-GPU strategies
+
+*** Comparisons
+- [[file:ray-vs-ollama.org][Ray vs Ollama]] - Distributed AI comparison for n8n workflows
+
+** Proxmox Containerization
+
+*** Getting Started
 - [[file:proxmox-containers-overview.org][Proxmox Containers Overview]] - Start here for an introduction
 
-** Core Concepts
-
+*** Core Concepts
 - [[file:system-vs-application-containers.org][System vs Application Containers]] - Fundamental differences between LXC and OCI containers
 - [[file:oci-standards.org][OCI Standards]] - Understanding container image standards and interoperability
 - [[file:podman-vs-docker.org][Podman vs Docker]] - Comparison and migration guide
 
-** Technical Decisions
-
+*** Technical Decisions
 - [[file:lxc-vs-vm-for-containers.org][LXC vs VM for Container Runtimes]] - When to use each approach
 - [[file:privileged-containers.org][Privileged Containers]] - When they're needed and security implications
 
-** Architecture and Design
-
+*** Architecture and Design
 - [[file:architecture-patterns.org][Architecture Patterns]] - Different ways to organize containers in Proxmox
 - [[file:high-availability-setup.org][High Availability Setup]] - Multi-host HA configurations
 
@@ -55,6 +70,20 @@ System vs   Podman vs   OCI     LXC vs VM    Privileged
 
 * Files in This Repository
 
+** Ray Distributed Computing
+
+| File | Description |
+|------+-------------|
+| [[file:ray-fundamentals.org][ray-fundamentals.org]] | Core concepts and remote actors |
+| [[file:ray-homelab-deployment.org][ray-homelab-deployment.org]] | Complete deployment guide |
+| [[file:ray-mixed-hardware-architecture.org][ray-mixed-hardware-architecture.org]] | Heterogeneous cluster architecture |
+| [[file:ray-mlx-cuda-integration.org][ray-mlx-cuda-integration.org]] | MLX and CUDA framework integration |
+| [[file:ray-apple-silicon-gpu-support.org][ray-apple-silicon-gpu-support.org]] | Apple Silicon GPU capabilities |
+| [[file:ray-proxmox-gpu-passthrough.org][ray-proxmox-gpu-passthrough.org]] | Proxmox GPU virtualization for Ray |
+| [[file:ray-vs-ollama.org][ray-vs-ollama.org]] | Comparison for distributed AI |
+
+** Proxmox Containerization
+
 | File | Description |
 |------+-------------|
 | [[file:proxmox-containers-overview.org][proxmox-containers-overview.org]] | Main entry point and overview |
@@ -68,7 +97,33 @@ System vs   Podman vs   OCI     LXC vs VM    Privileged
 
 * Key Topics Covered
 
-** Container Technologies
+** Ray Distributed Computing
+
+*** Core Concepts
+- Stateless functions vs stateful actors
+- Remote actors and distributed Python classes
+- Heterogeneous cluster orchestration
+- Resource management across different hardware
+
+*** Hardware Integration
+- Apple Silicon with MLX framework
+- NVIDIA GPUs with CUDA
+- Metal Performance Shaders (MPS) on Apple Silicon
+- PyTorch integration with both platforms
+
+*** Proxmox Integration
+- GPU passthrough strategies
+- Head node vs worker node separation
+- Multi-GPU VM configuration
+- Network architecture for Ray clusters
+
+*** Deployment Strategies
+- Phase-based rollout approach
+- Systemd service configuration
+- Monitoring and observability
+- Integration with n8n workflows
+
+** Proxmox Container Technologies
 
 - Proxmox LXC containers (system containers)
 - Podman containers (OCI application containers)
@@ -124,9 +179,23 @@ See [[file:oci-standards.org][OCI Standards]] - explains standardization and int
 
 See [[file:high-availability-setup.org][High Availability Setup]] - multi-host configurations and layered HA approach.
 
-* Recommended Reading Path
+* Recommended Reading Paths
 
-For someone new to this topic:
+** Ray Distributed Computing Path
+
+For someone setting up Ray in a home lab:
+
+1. Start with [[file:ray-fundamentals.org][Ray Fundamentals]] to understand core concepts
+2. Review [[file:ray-apple-silicon-gpu-support.org][Apple Silicon GPU Support]] to understand hardware capabilities
+3. Learn [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration]] for framework selection
+4. Study [[file:ray-mixed-hardware-architecture.org][Mixed Hardware Architecture]] for cluster design
+5. If using Proxmox, read [[file:ray-proxmox-gpu-passthrough.org][Proxmox GPU Passthrough]]
+6. Follow [[file:ray-homelab-deployment.org][Home Lab Deployment Guide]] for implementation
+7. Compare with [[file:ray-vs-ollama.org][Ray vs Ollama]] to validate your choice
+
+** Proxmox Containerization Path
+
+For someone new to Proxmox containers:
 
 1. Start with [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]
 2. Understand [[file:system-vs-application-containers.org][System vs Application Containers]]
@@ -138,31 +207,61 @@ For someone new to this topic:
 
 * TODO Items
 
-** TODO Research rootless alternatives for common privileged use cases
+** Ray Deployment Tasks
+
+*** TODO Set up Ray head node on Proxmox VM
+*** TODO Configure Apple Silicon Mac as Ray worker
+*** TODO Deploy GPU worker VMs with passthrough
+*** TODO Test MLX workloads on Apple Silicon
+*** TODO Test CUDA workloads on NVIDIA GPUs
+*** TODO Implement systemd services for auto-start
+*** TODO Configure Ray dashboard monitoring
+*** TODO Integrate with n8n workflows
+*** TODO Document backup and disaster recovery procedures
+*** TODO Performance benchmark different workload types
+
+** Proxmox Container Tasks
+
+*** TODO Research rootless alternatives for common privileged use cases
 
 See [[file:privileged-containers.org][Privileged Containers]] for context.
 
-** TODO Consider hybrid architecture approaches
+*** TODO Consider hybrid architecture approaches
 
 See [[file:architecture-patterns.org][Architecture Patterns]] - mixing patterns based on service criticality.
 
-** TODO Set up Proxmox cluster with shared storage
-** TODO Configure LXC container migration
-** TODO Deploy load balancer across multiple hosts
-** TODO Implement database replication
-** TODO Set up monitoring and alerting
-** TODO Test failover scenarios
-** TODO Document recovery procedures
-** TODO Create backup and restore procedures
+*** TODO Set up Proxmox cluster with shared storage
+*** TODO Configure LXC container migration
+*** TODO Deploy load balancer across multiple hosts
+*** TODO Implement database replication
+*** TODO Set up monitoring and alerting
+*** TODO Test failover scenarios
+*** TODO Document recovery procedures
+*** TODO Create backup and restore procedures
 
 See [[file:high-availability-setup.org][High Availability Setup]] for implementation details.
 
 * Contributing
 
-These documents are based on a conversation about Proxmox container strategies with focus on:
+These documents are based on Claude conversations covering:
+
+** Ray Distributed Computing
+- Heterogeneous hardware clusters (Apple Silicon + NVIDIA)
+- MLX and CUDA framework integration
+- Proxmox virtualization with GPU passthrough
+- Home lab deployment strategies
+
+** Proxmox Containerization
 - Open source solutions
 - Security best practices
 - Resource efficiency
 - Practical trade-offs
 
 Feel free to expand these documents as you implement and learn from real-world experience.
+
+* Cross-Topic Integration
+
+Ray and Proxmox documentation are interconnected:
+- [[file:ray-proxmox-gpu-passthrough.org][Ray Proxmox GPU Passthrough]] references [[file:proxmox-containers-overview.org][Proxmox Containers]]
+- GPU passthrough concepts apply to both container and Ray VM deployments
+- High availability patterns from [[file:high-availability-setup.org][HA Setup]] can inform Ray cluster design

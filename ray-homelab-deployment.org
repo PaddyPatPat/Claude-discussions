@@ -1,0 +1,702 @@
+#+TITLE: Ray Home Lab Deployment Guide
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray homelab deployment apple-silicon nvidia mlx cuda
+
+* Overview
+
+This guide provides step-by-step instructions for deploying Ray in a home lab environment with heterogeneous hardware: Apple Silicon Macs and Linux machines with NVIDIA GPUs.
+
+*Key Configuration Notes:*
+- No vLLM usage (lacks Apple Silicon GPU support)
+- MLX-based workloads preferred on Apple Silicon nodes
+- CUDA workloads on Linux with NVIDIA GPUs
+- Proxmox VE used for Linux node virtualization
+
+* Prerequisites
+
+** Hardware Requirements
+
+*** Apple Silicon Macs
+- Mac Mini M2/M3/M4 or MacBook Pro with Apple Silicon
+- 16-32GB unified memory recommended
+- macOS Monterey or later
+
+*** Linux + NVIDIA GPU Machines
+- Proxmox VE 8.0+ hosts
+- NVIDIA GPUs (GeForce RTX 3000/4000 series or Quadro)
+- Sufficient CPU cores and RAM for VMs
+
+*** Network Infrastructure
+- Gigabit Ethernet minimum (10GbE preferred)
+- All nodes on same subnet
+- Low-latency switch
+- Static IP addresses or DHCP reservations
+
+** Software Requirements
+
+- Python 3.8+
+- pip package manager
+- SSH access to all nodes
+- Root/sudo access for installation
+
+* Phase 1: Single-Node Testing
+
+** Apple Silicon Node Setup
+
+*** Install Prerequisites
+
+#+BEGIN_SRC bash
+# Install Homebrew if not already installed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Python via Homebrew
+brew install python@3.11
+
+# Verify Python installation
+python3 --version
+#+END_SRC
+
+*** Install Ray
+
+#+BEGIN_SRC bash
+# Create virtual environment (recommended)
+python3 -m venv ~/ray-env
+source ~/ray-env/bin/activate
+
+# Install Ray
+pip install -U ray
+
+# Verify installation
+python -c "import ray; print(ray.__version__)"
+#+END_SRC
+
+*** Install MLX Framework
+
+#+BEGIN_SRC bash
+# Install MLX
+pip install mlx
+
+# Verify MLX installation
+python -c "import mlx.core as mx; print(mx.__version__)"
+#+END_SRC
+
+*** Install PyTorch with MPS Support
+
+#+BEGIN_SRC bash
+# Install PyTorch with MPS backend
+pip install torch torchvision torchaudio
+
+# Verify MPS availability
+python -c "import torch; print(torch.backends.mps.is_available())"
+#+END_SRC
+
+*** Test Ray Locally
+
+#+BEGIN_SRC python
+import ray
+
+# Initialize Ray
+ray.init()
+
+# Simple task test
+@ray.remote
+def hello_world():
+    return "Hello from Ray on Apple Silicon!"
+
+# Execute task
+result = ray.get(hello_world.remote())
+print(result)
+
+# Check resources
+print(ray.cluster_resources())
+
+# Shutdown
+ray.shutdown()
+#+END_SRC
+
+** Linux + NVIDIA GPU Node Setup
+
+See [[file:ray-proxmox-gpu-passthrough.org][Ray with Proxmox GPU Passthrough]] for detailed VM setup.
+
+*** Install Prerequisites on GPU Worker VM
+
+#+BEGIN_SRC bash
+# Update system
+sudo apt update
+sudo apt upgrade -y
+
+# Install Python
+sudo apt install -y python3 python3-pip python3-venv
+
+# Install NVIDIA drivers (if not already installed)
+sudo apt install -y nvidia-driver-535 nvidia-utils-535
+
+# Verify GPU
+nvidia-smi
+#+END_SRC
+
+*** Install CUDA Toolkit
+
+#+BEGIN_SRC bash
+# Install CUDA
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+sudo apt install -y cuda-toolkit-12-3
+
+# Add to PATH
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+#+END_SRC
+
+*** Install Ray with GPU Support
+
+#+BEGIN_SRC bash
+# Create virtual environment
+python3 -m venv ~/ray-env
+source ~/ray-env/bin/activate
+
+# Install Ray
+pip install -U ray
+
+# Install PyTorch with CUDA
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#+END_SRC
+
+*** Test Ray with GPU
+
+#+BEGIN_SRC python
+import ray
+import torch
+
+# Initialize Ray
+ray.init()
+
+# GPU task test
+@ray.remote(num_gpus=1)
+def gpu_test():
+    return {
+        "cuda_available": torch.cuda.is_available(),
+        "gpu_count": torch.cuda.device_count(),
+        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    }
+
+# Execute
+result = ray.get(gpu_test.remote())
+print(result)
+
+# Check Ray resources
+print(ray.cluster_resources())
+
+ray.shutdown()
+#+END_SRC
+
+* Phase 2: Multi-Node Cluster Setup
+
+** Head Node Deployment
+
+*** Choose Head Node Location
+
+*Recommended*: Deploy on a dedicated VM in Proxmox (see [[file:ray-proxmox-gpu-passthrough.org][Proxmox GPU Passthrough Guide]]).
+
+*** Start Ray Head Node
+
+On the designated head node VM:
+
+#+BEGIN_SRC bash
+# Start head node with zero CPU resources
+ray start \
+  --head \
+  --num-cpus=0 \
+  --port=6379 \
+  --dashboard-host=0.0.0.0 \
+  --dashboard-port=8265
+
+# Note the output showing the address to connect workers
+# Example: To connect a worker: ray start --address='192.168.1.100:6379'
+#+END_SRC
+
+*** Verify Head Node
+
+#+BEGIN_SRC bash
+# Check Ray status
+ray status
+
+# Access dashboard at: http://<head-node-ip>:8265
+#+END_SRC
+
+** Worker Node Deployment
+
+*** Apple Silicon Workers
+
+**** Enable Multi-OS Cluster Support
+
+#+BEGIN_SRC bash
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+#+END_SRC
+
+**** Connect to Head Node
+
+#+BEGIN_SRC bash
+# Join the cluster
+ray start --address='<head-node-ip>:6379'
+
+# Verify connection
+ray status
+#+END_SRC
+
+**** Configure Custom Resources
+
+#+BEGIN_SRC bash
+# Start worker with custom resources
+ray start \
+  --address='<head-node-ip>:6379' \
+  --resources='{"apple_silicon": 1, "mlx": 1}'
+#+END_SRC
+
+*** Linux + NVIDIA GPU Workers
+
+**** Connect to Head Node
+
+#+BEGIN_SRC bash
+# Join the cluster (GPUs automatically detected)
+ray start --address='<head-node-ip>:6379'
+
+# Verify GPU detection
+ray status
+#+END_SRC
+
+**** Configure Custom Resources
+
+#+BEGIN_SRC bash
+# Start worker with custom CUDA resources
+ray start \
+  --address='<head-node-ip>:6379' \
+  --resources='{"cuda": 1}'
+#+END_SRC
+
+** Cluster Verification
+
+*** Check Cluster Status
+
+#+BEGIN_SRC bash
+# On any node
+ray status
+
+# Expected output should show:
+# - Head node
+# - All worker nodes
+# - CPU and GPU resources
+#+END_SRC
+
+*** Test Cross-Node Communication
+
+#+BEGIN_SRC python
+import ray
+
+# Connect to cluster
+ray.init(address='auto')
+
+@ray.remote
+def get_node_info():
+    import socket
+    return socket.gethostname()
+
+# Create tasks on different nodes
+futures = [get_node_info.remote() for _ in range(10)]
+results = ray.get(futures)
+
+# Should see different hostnames
+print(set(results))
+
+ray.shutdown()
+#+END_SRC
+
+* Phase 3: Workload Distribution
+
+** MLX Workload on Apple Silicon
+
+#+BEGIN_SRC python
+import ray
+
+# Connect to cluster
+ray.init(address='auto')
+
+# MLX actor (scheduled on Apple Silicon)
+@ray.remote(resources={"mlx": 1})
+class MLXInference:
+    def __init__(self):
+        import mlx.core as mx
+        print(f"MLX Actor initialized on Apple Silicon")
+
+    def predict(self, data):
+        import mlx.core as mx
+        # MLX inference logic
+        return mx.array(data) * 2
+
+# Deploy actor
+mlx_actor = MLXInference.remote()
+result = ray.get(mlx_actor.predict.remote([1, 2, 3]))
+print(result)
+#+END_SRC
+
+** CUDA Workload on NVIDIA GPUs
+
+#+BEGIN_SRC python
+import ray
+
+ray.init(address='auto')
+
+# CUDA actor (scheduled on NVIDIA GPU worker)
+@ray.remote(num_gpus=1, resources={"cuda": 1})
+class CUDAInference:
+    def __init__(self):
+        import torch
+        self.device = torch.device("cuda")
+        print(f"CUDA Actor on GPU: {torch.cuda.get_device_name(0)}")
+
+    def predict(self, data):
+        import torch
+        tensor = torch.tensor(data).to(self.device)
+        return (tensor * 2).cpu().numpy()
+
+# Deploy actor
+cuda_actor = CUDAInference.remote()
+result = ray.get(cuda_actor.predict.remote([1, 2, 3]))
+print(result)
+#+END_SRC
+
+** Hybrid Pipeline Example
+
+#+BEGIN_SRC python
+import ray
+
+ray.init(address='auto')
+
+# CPU preprocessing on Apple Silicon
+@ray.remote(resources={"apple_silicon": 1})
+class Preprocessor:
+    def preprocess(self, raw_data):
+        # Data preprocessing
+        return [x * 0.5 for x in raw_data]
+
+# GPU inference on NVIDIA
+@ray.remote(num_gpus=1, resources={"cuda": 1})
+class GPUInference:
+    def __init__(self):
+        import torch
+        self.device = torch.device("cuda")
+
+    def infer(self, processed_data):
+        import torch
+        tensor = torch.tensor(processed_data).to(self.device)
+        return tensor.mean().item()
+
+# Create pipeline
+preprocessor = Preprocessor.remote()
+inference = GPUInference.remote()
+
+# Execute pipeline
+raw_data = list(range(100))
+processed = preprocessor.preprocess.remote(raw_data)
+result = inference.infer.remote(processed)
+final = ray.get(result)
+
+print(f"Pipeline result: {final}")
+#+END_SRC
+
+* Phase 4: Production Patterns
+
+** Systemd Service for Ray Nodes
+
+*** Head Node Service
+
+Create =/etc/systemd/system/ray-head.service=:
+
+#+BEGIN_SRC conf
+[Unit]
+Description=Ray Head Node
+After=network.target
+
+[Service]
+Type=forking
+User=rayuser
+ExecStart=/home/rayuser/ray-env/bin/ray start --head --num-cpus=0 --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265
+ExecStop=/home/rayuser/ray-env/bin/ray stop
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+#+END_SRC
+
+Enable and start:
+#+BEGIN_SRC bash
+sudo systemctl enable ray-head
+sudo systemctl start ray-head
+sudo systemctl status ray-head
+#+END_SRC
+
+*** Worker Node Service
+
+Create =/etc/systemd/system/ray-worker.service=:
+
+#+BEGIN_SRC conf
+[Unit]
+Description=Ray Worker Node
+After=network.target
+
+[Service]
+Type=forking
+User=rayuser
+Environment="RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1"
+ExecStart=/home/rayuser/ray-env/bin/ray start --address='192.168.1.100:6379'
+ExecStop=/home/rayuser/ray-env/bin/ray stop
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+#+END_SRC
+
+Enable and start:
+#+BEGIN_SRC bash
+sudo systemctl enable ray-worker
+sudo systemctl start ray-worker
+sudo systemctl status ray-worker
+#+END_SRC
+
+** Monitoring and Observability
+
+*** Ray Dashboard
+
+Access at: =http://<head-node-ip>:8265=
+
+Features:
+- Cluster resource utilization
+- Task execution timeline
+- Actor lifecycle tracking
+- GPU utilization monitoring
+- Log aggregation
+
+*** Custom Metrics
+
+#+BEGIN_SRC python
+import ray
+from ray.util.metrics import Counter, Histogram, Gauge
+
+# Define metrics
+request_counter = Counter(
+    "inference_requests",
+    description="Number of inference requests"
+)
+
+inference_latency = Histogram(
+    "inference_latency_seconds",
+    description="Inference latency",
+    boundaries=[0.1, 0.5, 1.0, 2.0, 5.0]
+)
+
+@ray.remote(num_gpus=1)
+class MonitoredInference:
+    def predict(self, data):
+        import time
+        start = time.time()
+
+        # Inference logic
+        result = self.model.predict(data)
+
+        # Record metrics
+        request_counter.inc()
+        inference_latency.observe(time.time() - start)
+
+        return result
+#+END_SRC
+
+** Configuration Management
+
+*** Environment Variables
+
+Create =~/.rayrc=:
+
+#+BEGIN_SRC bash
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+export RAY_ADDRESS='auto'
+export RAY_DASHBOARD_HOST='0.0.0.0'
+#+END_SRC
+
+*** YAML Configuration
+
+Create =ray-cluster-config.yaml=:
+
+#+BEGIN_SRC yaml
+head_node:
+  ip: 192.168.1.100
+  port: 6379
+  dashboard_port: 8265
+  num_cpus: 0
+
+worker_nodes:
+  - type: apple_silicon
+    resources:
+      apple_silicon: 1
+      mlx: 1
+    count: 2
+
+  - type: nvidia_gpu
+    resources:
+      cuda: 1
+      num_gpus: 4
+    count: 2
+#+END_SRC
+
+* Integration with n8n
+
+** n8n Workflow Examples
+
+*** Route to Appropriate Hardware
+
+In n8n, use HTTP Request nodes to route to different Ray endpoints:
+
+#+BEGIN_SRC javascript
+// n8n function node
+if (workload_type === 'mlx') {
+    return {
+        endpoint: 'http://ray-head:8000/mlx/predict',
+        method: 'POST'
+    };
+} else if (workload_type === 'cuda') {
+    return {
+        endpoint: 'http://ray-head:8000/cuda/predict',
+        method: 'POST'
+    };
+}
+#+END_SRC
+
+** Ray API Server
+
+Create =ray_api_server.py=:
+
+#+BEGIN_SRC python
+from fastapi import FastAPI
+import ray
+
+app = FastAPI()
+ray.init(address='auto')
+
+@app.post("/mlx/predict")
+async def mlx_predict(data: dict):
+    @ray.remote(resources={"mlx": 1})
+    def mlx_inference(data):
+        # MLX inference
+        return data
+
+    result = ray.get(mlx_inference.remote(data))
+    return {"result": result}
+
+@app.post("/cuda/predict")
+async def cuda_predict(data: dict):
+    @ray.remote(num_gpus=1, resources={"cuda": 1})
+    def cuda_inference(data):
+        # CUDA inference
+        return data
+
+    result = ray.get(cuda_inference.remote(data))
+    return {"result": result}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+#+END_SRC
+
+* Troubleshooting
+
+** Common Issues
+
+*** Workers Not Connecting
+
+#+BEGIN_SRC bash
+# Check firewall
+sudo ufw status
+sudo ufw allow 6379
+sudo ufw allow 8265
+
+# Check Ray logs
+cat /tmp/ray/session_latest/logs/ray*
+#+END_SRC
+
+*** GPU Not Detected
+
+#+BEGIN_SRC bash
+# Verify NVIDIA driver
+nvidia-smi
+
+# Check CUDA
+nvcc --version
+
+# Verify Ray GPU detection
+python -c "import ray; ray.init(); print(ray.cluster_resources())"
+#+END_SRC
+
+*** MPS Not Available on Apple Silicon
+
+#+BEGIN_SRC bash
+# Check PyTorch MPS
+python -c "import torch; print(torch.backends.mps.is_available())"
+
+# Ensure macOS is up to date
+softwareupdate --list
+#+END_SRC
+
+*** Multi-OS Cluster Issues
+
+#+BEGIN_SRC bash
+# Ensure environment variable is set
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+
+# Check Ray version compatibility
+ray --version
+#+END_SRC
+
+* Learning Resources
+
+** Official Documentation
+
+- Ray Official Docs: https://docs.ray.io
+- Ray GitHub: https://github.com/ray-project/ray
+
+** Home Lab Tutorials
+
+- Anyscale Blog: "How to Write Your First Distributed Python Application with Ray"
+- DataCamp: "Distributed Processing using Ray framework in Python"
+- Doppler Blog: "Building a distributed AI system: How to set up Ray and vLLM on Mac Minis" (adapt for MLX)
+
+** Community Resources
+
+- Ray Slack/Discord communities
+- Ray GitHub discussions
+- Stack Overflow: ray tag
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration with Ray]]
+- [[file:ray-proxmox-gpu-passthrough.org][Ray with Proxmox GPU Passthrough]]
+- [[file:ray-apple-silicon-gpu-support.org][Ray with Apple Silicon GPU Support]]
+- [[file:proxmox-containers-overview.org][Proxmox Containers Overview]]
+
+* TODO Tasks
+
+** TODO Set up Ray head node on Proxmox VM
+** TODO Configure Apple Silicon Mac as Ray worker
+** TODO Deploy GPU worker VMs with passthrough
+** TODO Test MLX workloads on Apple Silicon
+** TODO Test CUDA workloads on NVIDIA GPUs
+** TODO Implement systemd services for auto-start
+** TODO Configure Ray dashboard monitoring
+** TODO Integrate with n8n workflows
+** TODO Document backup and disaster recovery procedures
+** TODO Performance benchmark different workload types

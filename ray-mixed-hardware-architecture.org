@@ -1,0 +1,319 @@
+#+TITLE: Ray Mixed Hardware Architecture
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray architecture apple-silicon nvidia heterogeneous-cluster
+
+* Overview
+
+This document describes the architecture for deploying Ray in a heterogeneous home lab environment with both Apple Silicon Macs and Linux machines with NVIDIA GPUs.
+
+*Key Decision*: This architecture excludes vLLM due to lack of Apple Silicon GPU support.
+
+* Architecture Philosophy
+
+Ray supports heterogeneous cluster patterns where data workloads run on CPU nodes and ML workloads run on GPU nodes, forming a heterogeneous cluster.
+
+* Optimal Role Distribution
+
+** Apple Silicon Macs (CPU and MPS GPU-focused nodes)
+
+*** Primary Roles
+- Data preprocessing and ingestion tasks
+- MLX-based GPU inference workloads
+- PyTorch with MPS backend inference
+- CPU-intensive inference workloads
+- Orchestration and coordination roles
+- Web serving and API endpoints
+- File I/O and networking operations
+
+*** Technical Capabilities
+- Unified memory architecture benefits
+- Energy-efficient processing
+- Metal Performance Shaders (MPS) for GPU acceleration
+- MLX framework optimization
+
+** Linux + NVIDIA GPU Machines
+
+*** Primary Roles
+- CUDA-accelerated inference
+- Model training and fine-tuning
+- Computer vision tasks
+- Vector computations and embeddings
+- Large-scale parallel processing
+
+*** Technical Capabilities
+- Full CUDA toolkit support
+- Tensor parallelism and pipeline parallelism
+- High-throughput GPU computing
+- Mature deep learning ecosystem
+
+* Multi-OS Cluster Considerations
+
+** Official Support
+
+Multi-node Ray clusters are officially only supported on Linux.
+
+** Experimental Setup
+
+Mac/Windows clusters can be deployed by setting environment variable:
+
+#+BEGIN_SRC bash
+export RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1
+#+END_SRC
+
+*Note*: Apple Silicon multi-node clusters are untested but supported with this flag.
+
+* Resource Allocation Patterns
+
+** GPU Node Resource Specification
+
+#+BEGIN_SRC python
+import ray
+
+# On NVIDIA GPU nodes - specify GPU requirements
+@ray.remote(num_gpus=1)
+class CUDAInference:
+    def __init__(self):
+        import torch
+        self.device = torch.device("cuda")
+        self.model = self.load_model().to(self.device)
+
+    def predict(self, data):
+        # GPU inference
+        pass
+#+END_SRC
+
+** CPU Node Resource Specification
+
+#+BEGIN_SRC python
+import ray
+
+# On Apple Silicon nodes - specify CPU/memory requirements
+@ray.remote(num_cpus=4, memory=8000*1024*1024)
+class DataProcessor:
+    def __init__(self):
+        # Initialize data processing
+        pass
+
+    def process(self, data):
+        # CPU-intensive processing
+        pass
+#+END_SRC
+
+** Apple Silicon GPU Specification
+
+#+BEGIN_SRC python
+import ray
+
+# On Apple Silicon nodes - MLX or MPS GPU workloads
+@ray.remote(num_gpus=1)
+class MLXInference:
+    def __init__(self):
+        import mlx.core as mx
+        # MLX automatically uses Apple Silicon GPU
+        self.model = self.load_model()
+
+    def predict(self, data):
+        # GPU inference on Apple Silicon
+        pass
+#+END_SRC
+
+* Network Architecture
+
+** Requirements
+
+- Gigabit Ethernet minimum
+- 10GbE preferred for large model transfers
+- Low-latency switch for coordination traffic
+- Consider dedicated storage node for model weights
+
+** Network Configuration
+
+- All nodes must be on the same network segment
+- Firewall rules for Ray ports (10001, 8265, etc.)
+- DNS or hosts file entries for node discovery
+- Consider separate networks for data and management traffic
+
+* Deployment Strategy
+
+** Phase 1: Homogeneous Testing
+
+Start with Linux-only cluster to establish baseline:
+
+1. Deploy Ray on Linux nodes only
+2. Verify GPU detection and utilization
+3. Test CUDA workloads
+4. Validate network communication
+5. Confirm monitoring and observability
+
+** Phase 2: Add Apple Silicon Nodes
+
+Gradually integrate Mac nodes:
+
+1. Set =RAY_ENABLE_WINDOWS_OR_OSX_CLUSTER=1=
+2. Join Mac nodes to existing cluster
+3. Test CPU workloads on Mac nodes
+4. Validate MLX GPU workloads
+5. Test PyTorch MPS GPU workloads
+6. Verify cross-platform coordination
+
+** Phase 3: Workload Separation
+
+Design clear workload boundaries:
+
+1. Route CPU tasks to Apple Silicon nodes
+2. Route CUDA tasks to Linux nodes
+3. Route MLX tasks to Apple Silicon nodes
+4. Implement intelligent scheduling based on resource requirements
+5. Monitor performance across node types
+
+* Workload Distribution with Ray Data
+
+Ray Data supports streaming for distributed execution across CPUs and GPUs:
+
+#+BEGIN_SRC python
+import ray
+
+# Create dataset
+ds = ray.data.read_parquet("s3://bucket/data")
+
+# Preprocess on CPU nodes (Apple Silicon)
+ds = ds.map(preprocess_fn)
+
+# Inference on GPU nodes (NVIDIA)
+ds = ds.map_batches(
+    inference_fn,
+    num_gpus=1,
+    batch_size=32
+)
+
+# Aggregate results on CPU nodes
+results = ds.groupby("category").count()
+#+END_SRC
+
+* Resource Management Best Practices
+
+** Node Labels
+
+Use custom resources to label node types:
+
+#+BEGIN_SRC python
+# On Apple Silicon node
+ray.init(resources={"apple_silicon": 1, "mlx": 1})
+
+# On NVIDIA GPU node
+ray.init(resources={"nvidia_gpu": 4, "cuda": 1})
+
+# Schedule tasks accordingly
+@ray.remote(resources={"mlx": 1})
+class MLXWorker:
+    pass
+
+@ray.remote(resources={"cuda": 1}, num_gpus=1)
+class CUDAWorker:
+    pass
+#+END_SRC
+
+** Dynamic Resource Allocation
+
+#+BEGIN_SRC python
+import ray
+
+def create_actor(workload_type):
+    if workload_type == "mlx":
+        return ray.remote(resources={"mlx": 1})(MLXWorker).remote()
+    elif workload_type == "cuda":
+        return ray.remote(num_gpus=1, resources={"cuda": 1})(CUDAWorker).remote()
+#+END_SRC
+
+* Monitoring and Observability
+
+** Ray Dashboard
+
+Access at: =http://head-node:8265=
+
+- Monitor resource utilization across heterogeneous nodes
+- Track task placement and execution
+- Identify bottlenecks
+- View GPU utilization (both CUDA and MPS)
+
+** Custom Metrics
+
+#+BEGIN_SRC python
+import ray
+from ray.util.metrics import Counter, Gauge
+
+# Track workload distribution
+mlx_tasks = Counter("mlx_tasks", "Tasks on Apple Silicon")
+cuda_tasks = Counter("cuda_tasks", "Tasks on NVIDIA GPUs")
+
+@ray.remote(resources={"mlx": 1})
+class MLXWorker:
+    def process(self, data):
+        mlx_tasks.inc()
+        # Process data
+#+END_SRC
+
+* Fault Tolerance
+
+** Node Failure Handling
+
+Ray automatically handles node failures:
+- Failed tasks are rescheduled
+- Actor reconstruction on available nodes
+- Lineage-based recovery for data
+
+** Best Practices
+
+- Design actors to be stateless when possible
+- Implement checkpointing for long-running tasks
+- Use Ray's object store for intermediate results
+- Configure actor max_restarts appropriately
+
+* Integration with n8n
+
+** Workflow Orchestration
+
+n8n can route different workload types:
+
+1. *Lightweight inference* → Apple Silicon nodes with MLX
+2. *Heavy compute* → NVIDIA GPU nodes with CUDA
+3. *Data preprocessing* → Apple Silicon CPU nodes
+4. *Training jobs* → NVIDIA GPU nodes
+
+** API Integration
+
+#+BEGIN_SRC python
+from fastapi import FastAPI
+import ray
+
+app = FastAPI()
+
+@app.post("/infer/mlx")
+async def mlx_inference(data: dict):
+    actor = ray.get_actor("mlx_inference")
+    result = ray.get(actor.predict.remote(data))
+    return {"result": result}
+
+@app.post("/infer/cuda")
+async def cuda_inference(data: dict):
+    actor = ray.get_actor("cuda_inference")
+    result = ray.get(actor.predict.remote(data))
+    return {"result": result}
+#+END_SRC
+
+* Summary
+
+This architecture leverages:
+- Apple Silicon's efficiency for CPU tasks and MLX GPU workloads
+- NVIDIA GPUs for heavy AI inference and training
+- Ray's heterogeneous cluster support
+- Intelligent workload routing based on hardware capabilities
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]
+- [[file:ray-mlx-cuda-integration.org][MLX and CUDA Integration with Ray]]
+- [[file:ray-proxmox-gpu-passthrough.org][Ray with Proxmox GPU Passthrough]]
+- [[file:ray-apple-silicon-gpu-support.org][Ray with Apple Silicon GPU Support]]

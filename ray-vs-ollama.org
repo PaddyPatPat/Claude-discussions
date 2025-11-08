@@ -1,0 +1,120 @@
+#+TITLE: Ray vs Ollama for Distributed AI
+#+AUTHOR: Claude Discussion
+#+DATE: 2025-11-08
+#+TAGS: ray ollama distributed-ai comparison n8n
+
+* Overview
+
+This document compares Ray versus Ollama for utilizing multiple computers, each containing multiple GPUs, to run parallel AI processes, potentially orchestrated via n8n.
+
+* Architecture Philosophy
+
+** Ray
+
+- General-purpose distributed computing framework designed from the ground up for scalable, fault-tolerant distributed systems
+- Used as the default distributed runtime for multi-node inference in systems like vLLM
+- Offers scalable and efficient solutions to train LLMs across large GPU clusters
+
+** Ollama
+
+- Primarily designed as a simple local LLM server
+- Distributed capabilities being added over time
+- Current GitHub issues show users requesting better multi-GPU and distributed computing features
+- These are evolving capabilities rather than core design principles
+
+* Multi-GPU Support
+
+** Ray
+
+- Native support for tensor parallelism and pipeline parallelism across multiple GPUs and nodes
+- Can be configured for multi-GPU inference by setting tensor_parallel_size to the desired GPU count
+- Seamlessly handles both single-node multi-GPU and multi-node multi-GPU setups
+- Advanced memory management and GPU resource allocation
+
+** Ollama
+
+- Multi-GPU support exists but has had efficiency issues in recent versions
+- Primarily designed for single-node multi-GPU rather than true distributed computing
+- Users are actively requesting features to run single large models across multiple machines
+
+* Distributed Computing Capabilities
+
+** Ray
+
+- True distributed computing: Can split workloads across multiple machines efficiently
+- Fault tolerance: Built-in recovery mechanisms if nodes fail
+- Dynamic scaling: Can add/remove nodes during execution
+- Sophisticated scheduling: Intelligent task placement across the cluster
+- Resource management: Fine-grained control over CPU, GPU, and memory allocation
+
+** Ollama
+
+- Limited distributed support: Primarily achieved through cluster setups with load balancing
+- Node-level distribution: Each node typically runs independent Ollama instances
+- Manual coordination: Requires external orchestration for true distributed workflows
+
+* Integration with n8n
+
+** Ray with n8n
+
+*** Advantages
+
+- Can create Ray actors that persist across n8n workflow steps
+- Better resource utilization across the cluster
+- Can handle complex multi-step AI pipelines efficiently
+- Built-in monitoring and observability tools
+
+*** Challenges
+
+- More complex setup and configuration
+- Requires understanding of distributed systems concepts
+- Higher learning curve
+
+** Ollama with n8n
+
+*** Advantages
+
+- Simpler HTTP API integration with n8n
+- Easier to set up individual instances
+- More straightforward for simple inference tasks
+
+*** Challenges
+
+- Manual load balancing across nodes
+- Less efficient resource utilization
+- Limited coordination between instances
+
+* Use Case Recommendations
+
+** Choose Ray When
+
+- You need true distributed computing across multiple machines
+- Running complex AI workflows requiring coordination between tasks
+- Need fault tolerance and dynamic scaling
+- Working with large models that benefit from tensor/pipeline parallelism
+- Want sophisticated resource management and monitoring
+- Planning to do both training and inference at scale
+
+** Choose Ollama When
+
+- You want simple LLM inference with minimal setup complexity
+- Your workload consists of independent inference requests
+- You don't need complex distributed coordination
+- Your team prefers simpler architectural patterns
+- You're primarily doing inference rather than training
+
+* Hybrid Approach
+
+For n8n orchestration, consider:
+
+- *Ray for compute-intensive tasks*: Use Ray actors for model serving and complex AI processing
+- *Ollama for simple inference*: Use Ollama instances for lightweight, independent inference tasks
+- *n8n as the orchestrator*: Route different types of requests to appropriate backends based on complexity and resource requirements
+
+This hybrid approach gives you the simplicity of Ollama for basic tasks while leveraging Ray's power for complex distributed AI workflows.
+
+* Related Topics
+
+- [[file:ray-fundamentals.org][Ray Fundamentals]]
+- [[file:ray-homelab-deployment.org][Ray Home Lab Deployment Guide]]
+- [[file:ray-mixed-hardware-architecture.org][Ray Mixed Hardware Architecture]]
