@@ -1,0 +1,408 @@
+#+TITLE: Magit Custom Sections Integration
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit elisp git-interface
+
+* Overview
+
+This document explains how to integrate custom sections into Magit's status buffer and how to work with Magit's section-based architecture for displaying detected content moves.
+
+* Magit's Section-Based Architecture
+
+** What Are Sections?
+
+Magit organizes all content in =magit-status= into "sections":
+
+- Files
+- Hunks within files
+- Staged/unstaged changes
+- Commits
+- Branches
+
+** Section Features
+
+All sections support:
+
+- Collapsing/expanding with =TAB=
+- Navigation with =p= (previous) and =n= (next)
+- Staging individual hunks by moving to them and typing =s=
+- Hierarchical organization (hunks are children of file sections)
+
+** Section Data Structure
+
+Sections are represented using =eieio= (Emacs Object System):
+
+#+BEGIN_SRC elisp
+;; Access section properties using oref
+(oref section type)      ; Returns: file, hunk, branch, etc.
+(oref section value)     ; Returns: filename, content, etc.
+(oref section parent)    ; Returns: parent section
+(oref section children)  ; Returns: list of child sections
+(oref section content)   ; Returns: section content/text
+#+END_SRC
+
+**Important**: Do NOT use functions like =magit-section-type= directly - they may not exist in all Magit versions. Always use =oref= to access section fields.
+
+* Adding Custom Sections to Magit Status
+
+** Using magit-add-section-hook
+
+Register a function to insert custom content into magit-status:
+
+#+BEGIN_SRC elisp
+(magit-add-section-hook 'magit-status-sections-hook
+                        'my-custom-section-function
+                        'magit-insert-untracked-files  ; Insert before this
+                        t)  ; Append (use nil to prepend)
+#+END_SRC
+
+**Parameters**:
+- Hook to modify: =magit-status-sections-hook=
+- Function to call: Your custom section insertion function
+- Reference point: Where to insert relative to other sections
+- Append flag: =t= to append after, =nil= to prepend before
+
+** Custom Section Function Example
+
+#+BEGIN_SRC elisp
+(defun my-org-roam-moves-section ()
+  "Insert section showing detected content moves."
+  (magit-insert-section (org-roam-moves)
+    (magit-insert-heading "Content Moves")
+
+    ;; Insert detected moves here
+    (dolist (move detected-moves)
+      (insert (format "  %s → %s\n"
+                     (plist-get move :from-file)
+                     (plist-get move :to-file))))
+
+    (insert "\n")))
+#+END_SRC
+
+** Section Insertion Macros
+
+=magit-insert-section= macro structure:
+
+#+BEGIN_SRC elisp
+(magit-insert-section (section-type &optional value hide)
+  (magit-insert-heading "Section Title")
+  ;; Insert section content
+  (insert "Content here\n"))
+#+END_SRC
+
+** Nested Sections
+
+Create hierarchical sections:
+
+#+BEGIN_SRC elisp
+(magit-insert-section (org-roam-moves)
+  (magit-insert-heading "Content Moves")
+
+  ;; Each move as a subsection
+  (dolist (move moves)
+    (magit-insert-section (org-roam-move move)
+      (insert (format "  %s → %s (%.0f%% similarity)\n"
+                     (plist-get move :from)
+                     (plist-get move :to)
+                     (plist-get move :similarity))))))
+#+END_SRC
+
+* Magit Section API
+
+** Section Navigation
+
+*** magit-section-map
+
+Iterate over all sections in buffer:
+
+#+BEGIN_SRC elisp
+(magit-section-map
+  (lambda (section)
+    (when (eq (oref section type) 'hunk)
+      ;; Process hunk section
+      (message "Found hunk: %s" (oref section value)))))
+#+END_SRC
+
+**Use Case**: Find all hunks across all files in magit-status
+
+*** Manual Navigation
+
+Navigate through sections:
+
+#+BEGIN_SRC elisp
+(save-excursion
+  (goto-char (point-min))
+  (while (not (eobp))
+    (let ((section (magit-current-section)))
+      ;; Process section
+      )
+    (condition-case nil
+        (magit-section-forward)
+      (error (goto-char (point-max))))))
+#+END_SRC
+
+** Accessing Section Data
+
+*** Current Section
+
+Get the section at point:
+
+#+BEGIN_SRC elisp
+(let ((section (magit-current-section)))
+  (when section
+    (let ((type (oref section type))
+          (value (oref section value))
+          (parent (oref section parent)))
+      ;; Work with section data
+      )))
+#+END_SRC
+
+*** Section Properties
+
+#+BEGIN_SRC elisp
+;; Section type (symbol)
+(oref section type)  ; 'file, 'hunk, 'branch, etc.
+
+;; Section value (varies by type)
+(oref section value)  ; filename for file sections, etc.
+
+;; Section relationships
+(oref section parent)   ; Parent section or nil
+(oref section children) ; List of child sections
+
+;; Section content
+(oref section content)  ; Text content of section
+#+END_SRC
+
+* Challenges with Magit Section API
+
+** Limited Section Traversal
+
+**Problem Observed**: =magit-section-map= sometimes only finds top-level sections (like "branch"), not nested sections (like individual file diffs).
+
+**Possible Causes**:
+- Sections might not be fully initialized when function runs
+- Iterator may not traverse children automatically
+- Buffer refresh timing issues
+
+**Workarounds**:
+1. Use direct buffer parsing instead of relying on section API
+2. Hook into magit at different refresh stages
+3. Manually traverse section children
+
+** Section Content Access Limitations
+
+**Problem**: Getting actual diff content from hunk sections is not straightforward.
+
+**What Works**: =oref section content= provides some content
+
+**What Doesn't Work**:
+- Content format varies by section type
+- Hunk content may not include +/- prefixes
+- File associations may be unclear
+
+** Better Approach: Direct Buffer Parsing
+
+Instead of fighting with the section API, parse the magit-status buffer directly:
+
+#+BEGIN_SRC elisp
+(save-excursion
+  (goto-char (point-min))
+  (while (re-search-forward "^modified[ \t]+\\([^ \t\n]+\\.org\\)" nil t)
+    (let ((filename (match-string 1)))
+      ;; Now find diff lines for this file
+      (while (looking-at "^[-+]")
+        (let ((line (buffer-substring (point) (line-end-position))))
+          ;; Process diff line
+          )
+        (forward-line 1)))))
+#+END_SRC
+
+* Parsing Magit Status Buffer Directly
+
+** Buffer Format
+
+Magit-status buffer structure:
+
+#+BEGIN_SRC text
+Head:     master Some commit message
+
+Unstaged changes (3)
+modified   file1.org
+@@ -1,7 +1,6 @@
+ * Test file 1.
+-** Deleted heading
++** Added heading
+
+modified   file2.org
+@@ -4,3 +4,5 @@
++New content here
+#+END_SRC
+
+** Parsing Strategy
+
+1. Find file markers: Lines starting with =modified=
+2. Track current file context
+3. Extract diff lines (starting with =-= or =+=)
+4. Associate each diff line with its file
+
+** Implementation
+
+#+BEGIN_SRC elisp
+(defun parse-magit-status-for-moves ()
+  "Extract all moved content from magit-status buffer."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((deleted-hunks '())
+          (added-hunks '())
+          (current-file nil))
+
+      ;; Parse line by line
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                    (line-beginning-position)
+                    (line-end-position))))
+
+          ;; Update current file context
+          (when (string-match "^modified[ \t]+\\(.+\\.org\\)" line)
+            (setq current-file (match-string 1 line)))
+
+          ;; Extract diff lines
+          (when (and current-file
+                     (string-match "^\\([-+]\\)\\(.*\\)" line))
+            (let ((prefix (match-string 1 line))
+                  (content (match-string 2 line)))
+              (if (string= prefix "-")
+                  (push (cons current-file content) deleted-hunks)
+                (push (cons current-file content) added-hunks)))))
+
+        (forward-line 1))
+
+      ;; Return extracted hunks
+      (cons deleted-hunks added-hunks))))
+#+END_SRC
+
+** Advantages of Direct Parsing
+
+- Independent of Magit's internal API changes
+- Direct access to visible diff content
+- Simple to understand and debug
+- No issues with section traversal
+- Works regardless of Magit version
+
+* Integration Points for Hooks
+
+** magit-status-refresh-hook
+
+Run code when magit-status refreshes:
+
+#+BEGIN_SRC elisp
+(add-hook 'magit-status-refresh-hook #'detect-org-roam-moves)
+
+(defun detect-org-roam-moves ()
+  "Detect content moves and update custom section."
+  (when (derived-mode-p 'magit-status-mode)
+    ;; Parse buffer for moves
+    ;; Update detected moves list
+    ;; Trigger section refresh if needed
+    ))
+#+END_SRC
+
+**Timing**: Runs after magit refreshes the status buffer
+
+**Use Case**: Automatically detect moves whenever status updates
+
+** magit-status-mode-hook
+
+Run code when entering magit-status-mode:
+
+#+BEGIN_SRC elisp
+(add-hook 'magit-status-mode-hook #'setup-org-roam-move-detection)
+
+(defun setup-org-roam-move-detection ()
+  "Set up move detection for this magit-status buffer."
+  ;; Initialize buffer-local variables
+  ;; Set up keybindings
+  ;; Run initial detection
+  )
+#+END_SRC
+
+**Timing**: Runs once when magit-status buffer is created
+
+**Use Case**: One-time setup for the buffer
+
+* Custom Transient Commands
+
+** What Are Transients?
+
+Magit's menu system for commands:
+
+- Press =?= in magit-status to see transient menu
+- Can add custom commands to transients
+- Provides organized command access
+
+** Defining a Custom Transient
+
+#+BEGIN_SRC elisp
+(require 'transient)
+
+(transient-define-prefix org-roam-move-menu ()
+  "Org-roam content move operations."
+  ["Content Move Operations"
+   ("m" "Stage content move" org-roam-stage-move)
+   ("d" "Detect moves" org-roam-detect-moves)
+   ("r" "Stage related files" org-roam-stage-related)])
+
+;; Bind to magit-status-mode
+(define-key magit-status-mode-map (kbd "C-c r") #'org-roam-move-menu)
+#+END_SRC
+
+## Staging Commands
+
+Programmatically stage files from detected moves:
+
+#+BEGIN_SRC elisp
+(defun org-roam-stage-move-pair (from-file to-file)
+  "Stage both files involved in a content move."
+  (magit-stage-file from-file)
+  (magit-stage-file to-file))
+#+END_SRC
+
+* Recommended Architecture
+
+Based on lessons learned from prototyping:
+
+** Phase 1: Buffer Parsing (Simple and Reliable)
+
+1. Parse magit-status buffer directly for file names and diff lines
+2. Extract deleted/added hunks with file associations
+3. Calculate similarity between hunks across different files
+4. Store results in buffer-local variable
+
+** Phase 2: Display Results (Custom Section)
+
+1. Add custom section to magit-status via hook
+2. Display high-similarity matches grouped by file pairs
+3. Use standard magit section formatting for consistency
+4. Allow collapsing/expanding each detected move
+
+** Phase 3: Interactive Commands (Staging Helpers)
+
+1. Add keybindings to stage both files in a detected move
+2. Provide transient menu for move operations
+3. Update display after staging
+
+* Related Topics
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]]
+- [[file:emacs-text-comparison-functions.org][Emacs Text Comparison Functions]]
+- [[file:orgmode-content-similarity-detection.org][Org-Mode Content Similarity Detection]]
+- [[file:magit-buffer-parsing-debugging.org][Magit Buffer Parsing and Debugging]]
+
+* TODO Tasks
+
+- TODO Implement buffer-local storage for detected moves
+- TODO Create custom magit section for displaying moves
+- TODO Add staging commands for file pairs
+- TODO Create transient menu for move operations
+- TODO Test integration with real magit-status workflow

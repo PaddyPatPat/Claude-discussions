@@ -1,0 +1,531 @@
+#+TITLE: Magit Buffer Parsing and Debugging
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit debugging elisp development
+
+* Overview
+
+This document chronicles the iterative development and debugging process for parsing magit-status buffer content to detect moved hunks between org-roam files. It captures lessons learned, common pitfalls, and working solutions.
+
+* Development Approach
+
+** Initial Strategy
+
+Original plan was to use Magit's Section API:
+
+1. Access magit sections programmatically
+2. Extract hunk data from section objects
+3. Compare hunks across files
+
+**Outcome**: Section API proved difficult to work with reliably
+
+** Revised Strategy
+
+Switched to direct buffer parsing:
+
+1. Parse magit-status buffer as text
+2. Use regex to find file markers and diff lines
+3. Track file context as we scan the buffer
+
+**Outcome**: Simpler, more reliable, easier to debug
+
+* Prototype Development Log
+
+** Version 1.0: First Attempt with Section API
+
+*** Code Approach
+
+#+BEGIN_SRC elisp
+;; Attempted to use magit-section-type, magit-section-value
+(let ((section-type (magit-section-type section)))
+  ...)
+#+END_SRC
+
+*** Problem Encountered
+
+Error: =Symbol's function definition is void: magit-section-type=
+
+*** Root Cause
+
+Function names assumed from documentation didn't exist in user's Magit version.
+
+*** Lesson Learned
+
+Don't assume function names - check actual Magit API using =oref= to access section object fields.
+
+** Version 2.0: Using oref for Section Access
+
+*** Code Improvement
+
+#+BEGIN_SRC elisp
+;; Correct way to access section properties
+(oref section type)
+(oref section value)
+(oref section parent)
+(oref section children)
+#+END_SRC
+
+*** Problem Encountered
+
+Only finding top-level sections (branch, unstaged), not individual file diffs or hunks.
+
+*** Debug Output
+
+#+BEGIN_SRC text
+Section type: branch, value type: string
+Section type: unstaged, value type: symbol
+Section type: file, value type: string
+# No hunk sections found!
+#+END_SRC
+
+*** Root Cause
+
+=magit-section-map= wasn't traversing the section hierarchy properly, or sections weren't structured as expected.
+
+*** Lesson Learned
+
+Section API is inconsistent or version-dependent. Need a different approach.
+
+** Version 2.1: Recursive Section Exploration
+
+*** Code Approach
+
+#+BEGIN_SRC elisp
+(defun explore-section-recursively (section depth)
+  "Recursively explore section hierarchy."
+  (let ((children (oref section children)))
+    (dolist (child children)
+      (explore-section-recursively child (1+ depth)))))
+#+END_SRC
+
+*** Problem Encountered
+
+Still only seeing top-level sections, no children found.
+
+### Debugging Attempts
+
+- Checked section hierarchy with =(oref section children)=
+- Tried different entry points (=magit-current-section= vs =magit-section-at=)
+- Attempted manual navigation through sections
+
+*** Result
+
+Sections either don't contain diff content as expected, or content is stored differently than anticipated.
+
+*** Lesson Learned
+
+Fighting with Magit's internal API is not productive. The buffer content is right there - just parse it.
+
+** Version 2.2: Direct Buffer Content Analysis
+
+*** Major Pivot
+
+Abandoned section API entirely. New approach:
+
+1. Dump buffer content as raw text
+2. Analyze the format
+3. Write regex patterns to extract data
+
+### Code
+
+#+BEGIN_SRC elisp
+(save-excursion
+  (goto-char (point-min))
+  (let ((line-count 0))
+    (while (and (not (eobp)) (< line-count 50))
+      (let ((line (buffer-substring-no-properties
+                  (line-beginning-position)
+                  (line-end-position))))
+        (message "Line %d: '%s'" line-count line)
+        (setq line-count (1+ line-count)))
+      (forward-line 1))))
+#+END_SRC
+
+### Debug Output
+
+#+BEGIN_SRC text
+Line 0: 'Head:     master Adding the initial content.'
+Line 1: ''
+Line 2: 'Unstaged changes (3)'
+Line 3: 'modified   file1.org'
+Line 4: '@@ -1,7 +1,6 @@'
+Line 5: ' * Test file 1.'
+Line 6: ' '
+Line 7: '-** Test file 1 subheading 1.'
+Line 8: '-And some text.'
+#+END_SRC
+
+*** Breakthrough
+
+Buffer content is plain text in standard diff format! We can parse it directly.
+
+*** Lesson Learned
+
+Sometimes the simplest approach (text parsing) is better than fighting with complex APIs.
+
+** Version 2.3: Regex Parsing with File Tracking
+
+*** Implementation
+
+Parse buffer line-by-line, tracking current file context:
+
+#+BEGIN_SRC elisp
+(let ((current-file nil))
+  (while (not (eobp))
+    (let ((line (buffer-substring-no-properties
+                (line-beginning-position)
+                (line-end-position))))
+
+      ;; Update file context
+      (when (string-match "^modified[ \t]+\\(.+\\.org\\)" line)
+        (setq current-file (match-string 1 line)))
+
+      ;; Extract diff lines
+      (when (string-match "^\\([-+]\\)\\(.*\\)" line)
+        (let ((prefix (match-string 1 line))
+              (content (match-string 2 line)))
+          ;; Store hunk with file association
+          ...)))
+    (forward-line 1)))
+#+END_SRC
+
+*** Problem Encountered
+
+All hunks were being assigned to the last file (file3.org) instead of their actual files.
+
+*** Debug Output
+
+#+BEGIN_SRC text
+Found diff line: '-** Test file 1 subheading 1.'
+  File: file3.org  # Wrong! Should be file1.org
+#+END_SRC
+
+*** Root Cause
+
+Logic error: The code was searching for all files first, then searching for all diff lines. By the time diff lines were processed, =current-file= was set to the last file found.
+
+*** Fix
+
+Process lines sequentially in a single pass, updating =current-file= as we encounter file markers:
+
+#+BEGIN_SRC elisp
+;; Process line by line, maintaining file context
+(while (not (eobp))
+  (cond
+   ;; Check for file header FIRST
+   ((string-match "^modified[ \t]+\\(.+\\.org\\)" line)
+    (setq current-file (match-string 1 line)))
+
+   ;; Then check for diff lines, using current-file
+   ((string-match "^[-+]" line)
+    (associate-with current-file ...)))
+
+  (forward-line 1))
+#+END_SRC
+
+* Key Debugging Techniques
+
+** Technique 1: Version Tracking
+
+Add version constant to code:
+
+#+BEGIN_SRC elisp
+(defconst org-roam-move-debug-version "2.3"
+  "Version of the prototype.")
+
+;; Display in output
+(insert (format "=== VERSION %s ===\n" org-roam-move-debug-version))
+#+END_SRC
+
+**Why It Helps**: Confirms which version of code is actually running, prevents confusion when testing.
+
+## Technique 2: Comprehensive Buffer Dumping
+
+Show exactly what's in the buffer:
+
+#+BEGIN_SRC elisp
+(let ((lines '()))
+  (save-excursion
+    (goto-char (point-min))
+    (while (not (eobp))
+      (push (buffer-substring-no-properties
+             (line-beginning-position)
+             (line-end-position))
+            lines)
+      (forward-line 1)))
+  (dolist (line (reverse lines))
+    (insert (format "'%s'\n" line))))
+#+END_SRC
+
+**Why It Helps**: Shows exact content including whitespace, formatting, indentation.
+
+** Technique 3: Detailed Parsing Logs
+
+Log every decision point:
+
+#+BEGIN_SRC elisp
+(when (string-match "^modified" line)
+  (push (format "Found file: %s" (match-string 1 line)) debug-info)
+  (setq current-file (match-string 1 line)))
+
+(when (string-match "^[-+]" line)
+  (push (format "Found diff in %s: %s" current-file line) debug-info))
+#+END_SRC
+
+**Why It Helps**: Reveals logic errors (like file tracking bug) that aren't obvious from final output.
+
+** Technique 4: Progressive Enhancement
+
+Build features incrementally:
+
+1. Just find files → works
+2. Add diff line detection → test
+3. Add file association → test
+4. Add similarity calculation → test
+
+**Why It Helps**: Isolates problems to specific features, easier to debug.
+
+* Common Pitfalls and Solutions
+
+** Pitfall 1: Assuming API Consistency
+
+**Problem**: Assuming functions like =magit-section-type= exist based on documentation.
+
+**Solution**: Always test API functions, use =oref= for object access, check Magit version compatibility.
+
+** Pitfall 2: Not Validating Intermediate Data
+
+**Problem**: Discovering after full implementation that hunks are assigned to wrong files.
+
+**Solution**: Add debug logging at every step, validate data at each transformation.
+
+** Pitfall 3: Complex API When Simple Solution Exists
+
+**Problem**: Spending time fighting with section API when buffer is plain text.
+
+**Solution**: Step back and consider simpler approaches. Text parsing is often easier than API navigation.
+
+** Pitfall 4: Processing Out of Order
+
+**Problem**: Searching for all files, then all diff lines (loses context).
+
+**Solution**: Single-pass sequential processing maintains state correctly.
+
+## Pitfall 5: Not Testing with Real Data
+
+**Problem**: Testing with assumptions about data format.
+
+**Solution**: Use actual magit-status buffer, dump its content, verify assumptions.
+
+* Working Solution Pattern
+
+** Complete Parsing Function
+
+#+BEGIN_SRC elisp
+(defun parse-magit-status-moves ()
+  "Parse magit-status buffer to extract potential content moves.
+Returns (DELETED-HUNKS . ADDED-HUNKS)."
+  (unless (derived-mode-p 'magit-status-mode)
+    (error "Must be run in magit-status buffer"))
+
+  (save-excursion
+    (goto-char (point-min))
+    (let ((deleted-hunks '())
+          (added-hunks '())
+          (current-file nil))
+
+      ;; Single-pass sequential parsing
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties
+                    (line-beginning-position)
+                    (line-end-position))))
+
+          ;; Track file context
+          (when (string-match "^modified[ \t]+\\(.+\\.org\\)$" line)
+            (setq current-file (match-string 1 line)))
+
+          ;; Extract diff lines
+          (when (and current-file
+                     (string-match "^\\([-+]\\)\\(.*\\)$" line))
+            (let* ((prefix (match-string 1 line))
+                   (content (match-string 2 line))
+                   (hunk (list :file current-file
+                              :content content
+                              :size (length content))))
+
+              (if (string= prefix "-")
+                  (push hunk deleted-hunks)
+                (push hunk added-hunks)))))
+
+        (forward-line 1))
+
+      ;; Return results
+      (cons deleted-hunks added-hunks))))
+#+END_SRC
+
+** Key Features of Working Solution
+
+1. **Single Pass**: Process buffer sequentially, maintain state
+2. **Context Tracking**: Update =current-file= before processing diff lines
+3. **Simple Regex**: Match on actual buffer content format
+4. **Error Handling**: Check for magit-status-mode
+5. **Clean Return**: Return structured data for further processing
+
+* Testing the Parser
+
+** Test Data Setup
+
+Create test scenario in real magit-status:
+
+#+BEGIN_SRC org
+# file1.org - Delete content:
+** Test heading
+Some text that will move.
+
+# file2.org - Add same content:
+** Test heading
+Some text that will move.
+#+END_SRC
+
+** Expected Output
+
+#+BEGIN_SRC text
+DELETED HUNKS:
+File: file1.org | Content: "** Test heading"
+File: file1.org | Content: "Some text that will move."
+
+ADDED HUNKS:
+File: file2.org | Content: "** Test heading"
+File: file2.org | Content: "Some text that will move."
+
+POTENTIAL MOVES:
+file1.org → file2.org (100% similarity)
+Content: "Test heading"
+#+END_SRC
+
+** Validation Checklist
+
+- [ ] Files correctly identified from =modified= lines
+- [ ] Diff lines extracted with correct =-=/=+= prefix
+- [ ] Each hunk associated with correct file
+- [ ] Similarity calculation working
+- [ ] Matches only shown across different files
+- [ ] Size-based sorting working
+
+* Performance Optimization
+
+** Efficient Buffer Scanning
+
+Use =re-search-forward= instead of line-by-line when possible:
+
+#+BEGIN_SRC elisp
+;; Faster for finding specific patterns
+(while (re-search-forward "^modified[ \t]+\\(.+\\.org\\)" nil t)
+  (let ((filename (match-string 1)))
+    ;; Process this file's diffs
+    ...))
+#+END_SRC
+
+** Lazy Similarity Calculation
+
+Only calculate similarity for promising pairs:
+
+#+BEGIN_SRC elisp
+;; Quick pre-filter: skip if size difference too large
+(when (< (abs (- size1 size2)) (* 0.5 (max size1 size2)))
+  ;; Now do expensive similarity calculation
+  (let ((similarity (org-roam-calculate-similarity ...)))
+    ...))
+#+END_SRC
+
+** Caching Results
+
+Store results in buffer-local variable:
+
+#+BEGIN_SRC elisp
+(defvar-local org-roam-detected-moves nil
+  "Cached list of detected content moves.")
+
+(defun org-roam-get-moves ()
+  "Get detected moves, using cache if available."
+  (or org-roam-detected-moves
+      (setq org-roam-detected-moves (org-roam-detect-moves))))
+#+END_SRC
+
+* Integration with Magit Workflow
+
+** When to Run Detection
+
+Hook into magit-status refresh:
+
+#+BEGIN_SRC elisp
+(add-hook 'magit-status-refresh-hook #'org-roam-detect-moves)
+#+END_SRC
+
+**Trade-off**: Automatic but runs frequently
+
+**Alternative**: Manual command triggered by keybinding:
+
+#+BEGIN_SRC elisp
+(define-key magit-status-mode-map (kbd "C-c m") #'org-roam-detect-moves)
+#+END_SRC
+
+**Trade-off**: Manual but more control over when it runs
+
+** Displaying Results
+
+Add custom section showing detected moves:
+
+#+BEGIN_SRC elisp
+(magit-add-section-hook 'magit-status-sections-hook
+                        'org-roam-insert-moves-section
+                        'magit-insert-untracked-files
+                        t)
+
+(defun org-roam-insert-moves-section ()
+  "Insert section showing detected content moves."
+  (when-let ((moves (org-roam-get-moves)))
+    (magit-insert-section (org-roam-moves)
+      (magit-insert-heading "Detected Content Moves")
+      (dolist (move moves)
+        (insert (format "  %s → %s (%.0f%%)\n"
+                       (plist-get move :from-file)
+                       (plist-get move :to-file)
+                       (plist-get move :similarity))))
+      (insert "\n"))))
+#+END_SRC
+
+* Future Improvements
+
+** TODO Enhancements
+
+- TODO Add interactive staging of move pairs (=s= on move section)
+- TODO Support multi-line hunks (currently line-by-line)
+- TODO Add configurable thresholds via customize interface
+- TODO Cache and invalidate on buffer changes only
+- TODO Add visualization of hunk size distribution
+- TODO Support tracking moves to/from new (untracked) files
+- TODO Add undo/redo for committed moves
+
+** Performance Improvements
+
+- TODO Benchmark with large repos (50+ files, 100+ hunks)
+- TODO Optimize similarity algorithm for common cases
+- TODO Consider async processing for very large diffs
+- TODO Add progress indicator for slow operations
+
+* Related Topics
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]]
+- [[file:magit-custom-sections-integration.org][Magit Custom Sections Integration]]
+- [[file:orgmode-content-similarity-detection.org][Org-Mode Content Similarity Detection]]
+- [[file:emacs-text-comparison-functions.org][Emacs Text Comparison Functions]]
+
+* Key Takeaways
+
+1. **Simple text parsing > Complex API** when buffer content is accessible
+2. **Version tracking** prevents confusion during iterative development
+3. **Comprehensive logging** reveals subtle bugs (like file tracking)
+4. **Progressive enhancement** isolates problems
+5. **Test with real data** early and often
+6. **Buffer content is reliable** - APIs may be version-dependent

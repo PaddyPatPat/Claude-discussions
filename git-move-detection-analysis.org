@@ -1,0 +1,256 @@
+#+TITLE: Git Move Detection Analysis
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: git diff move-detection version-control
+
+* Overview
+
+This document analyzes Git's built-in move detection capabilities and explains why they are unsuitable for detecting small content block movements between org-roam files.
+
+* Git's Built-in Move Detection
+
+** Command Options
+
+*** -M or --find-renames
+
+Detects when files are renamed or when content blocks move between files:
+
+#+BEGIN_SRC bash
+git diff -M
+git diff -M85%  # Use 85% similarity threshold
+#+END_SRC
+
+- Default similarity threshold: 50%
+- Can specify custom threshold: =-M85%= or =-M85=
+- More efficient than copy detection
+
+*** -C or --find-copies
+
+Like =-M= but also detects copied content (content appears in multiple files):
+
+#+BEGIN_SRC bash
+git diff -C
+git diff -C50%
+#+END_SRC
+
+- More computationally expensive than =-M=
+- Examines all files, not just modified ones
+- Useful for detecting duplicated code blocks
+
+*** --find-copies-harder
+
+Even more aggressive copy detection:
+
+#+BEGIN_SRC bash
+git diff --find-copies-harder
+#+END_SRC
+
+- Examines unmodified files as copy sources
+- Much slower but more thorough
+- Rarely needed for typical workflows
+
+** Git Output Format
+
+*** Name Status Format
+
+#+BEGIN_SRC bash
+$ git diff -M --name-status
+M    file1.org
+M    file2.org
+R090 old-file.org new-file.org  # 90% similarity rename
+C050 file1.org file3.org        # 50% of file1 copied to file3
+#+END_SRC
+
+- =M= indicates modification
+- =R= with percentage indicates rename/move
+- =C= with percentage indicates copy
+
+*** Full Diff Format
+
+#+BEGIN_SRC bash
+$ git diff -M
+diff --git a/file1.org b/file2.org
+similarity index 60%
+rename from file1.org
+rename to file2.org
+# ... actual diff hunks showing moves
+#+END_SRC
+
+Shows similarity index and detailed hunk information.
+
+* The Critical Limitation
+
+** File-Level vs Hunk-Level Similarity
+
+Git's move detection operates at two different levels, but only one is useful:
+
+*** File-Level Similarity
+
+What =-M= threshold actually measures:
+
+- Percentage of entire file content that is similar
+- Example: =C050 file1.org file3.org= means 50% of file1's total content appears in file3
+- **Problem**: Moving one sentence from a 1000-sentence file = 0.1% similarity
+
+Example demonstrating the problem:
+
+#+BEGIN_SRC org
+# file1.org (1000 lines total)
+... 999 lines of content ...
+We need to implement OAuth2 authentication.  # Line moved to file2
+
+# file2.org (500 lines total)
+... 500 lines of content ...
+We need to implement OAuth2 authentication.  # Added from file1
+
+# Git's file-level similarity: ~0.1%
+# Result: Not detected as a move even with -M5%
+#+END_SRC
+
+*** Hunk-Level Similarity
+
+What we actually need:
+
+- Similarity between individual deleted/added chunks
+- =similarity index 60%= in diff output refers to specific hunks
+- Would detect the single-line move above as ~100% similar
+
+** Why This Matters for Org-Roam
+
+Typical org-roam content movement scenarios:
+
+- Moving a single paragraph from a large reference file
+- Extracting a few sentences into a new concept note
+- Refactoring a section from one topic file to another
+
+All of these involve:
+
+- Small content blocks (1-10 lines)
+- Large source/destination files (100-1000+ lines)
+- File-level similarity << 10%
+
+Git's =-M= flag would require impractically low thresholds (=-M1%=) that would generate massive false positives.
+
+* Similarity Index Explained
+
+** What the Similarity Index Measures
+
+The =similarity index= in Git's output represents:
+
+#+BEGIN_SRC text
+similarity index = (lines_in_common / total_lines) * 100
+#+END_SRC
+
+** Examples of Hunk-Level Similarity
+
+*** Example A: High Similarity (90%)
+
+#+BEGIN_SRC diff
+# Deleted from file1:
+"We need to implement OAuth2 for secure login and data protection."
+
+# Added to file2:
+"We need to implement OAuth2 for secure login and user protection."
+
+# Only one word changed: "data" → "user"
+# Similarity: ~90%
+#+END_SRC
+
+*** Example B: Medium Similarity (60%)
+
+#+BEGIN_SRC diff
+# Deleted from file1:
+"The authentication system requires OAuth2 implementation for security."
+
+# Added to file2:
+"OAuth2 implementation needed for authentication security features."
+
+# Same concepts, different wording
+# Similarity: ~60%
+#+END_SRC
+
+*** Example C: Low Similarity (30%)
+
+#+BEGIN_SRC diff
+# Deleted from file1:
+"We need OAuth2 authentication."
+
+# Added to file2:
+"The system requires secure login functionality with proper user validation."
+
+# Different wording, some shared concepts
+# Similarity: ~30%
+#+END_SRC
+
+* Parsing Options for Git Diff
+
+** Option 1: git diff --name-status -M
+
+Quick overview of file relationships:
+
+#+BEGIN_SRC bash
+git diff --name-status -M
+
+# Output:
+M    file1.org
+M    file2.org
+C050 file1.org file3.org
+#+END_SRC
+
+**Pros**: Fast, shows which files are related
+
+**Cons**: No details about what moved or where
+
+**Use Case**: Identify file pairs that might have moves
+
+** Option 2: git diff -M file1 file2
+
+Detailed diff between specific files:
+
+#+BEGIN_SRC bash
+git diff -M file1 file2
+
+# Output shows actual moved content with context
+#+END_SRC
+
+**Pros**: Shows exact moved content and location
+
+**Cons**: Must run separately for each file pair
+
+**Use Case**: Get detailed hunk information after identifying file pairs
+
+** Recommended Approach (Before Abandoning Git)
+
+1. Use Option 1 to identify file pairs with potential moves
+2. Use Option 2 to get detailed hunk information for each pair
+3. Parse the output to extract moved content
+
+**Problem**: Still limited by file-level similarity threshold
+
+* Why Git Move Detection Won't Work
+
+** Summary of Limitations
+
+1. **Threshold Applies to Entire Files**: Even with custom thresholds like =-M85%=, the percentage is calculated based on total file size
+
+2. **Small Moves Invisible**: Moving a 5-line paragraph from a 500-line file = 1% similarity
+
+3. **False Positive Risk**: Lowering threshold to =-M5%= would flag unrelated files with minor coincidental similarities
+
+4. **Wrong Granularity**: We need per-hunk similarity, Git provides per-file similarity
+
+** Decision Point
+
+Given these limitations, **Git's built-in move detection is unsuitable** for org-roam content tracking. Alternative approach needed: implement custom hunk-level similarity matching using Emacs functions.
+
+* Related Topics
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]]
+- [[file:emacs-text-comparison-functions.org][Emacs Text Comparison Functions]]
+- [[file:orgmode-content-similarity-detection.org][Org-Mode Content Similarity Detection]]
+
+* TODO Tasks
+
+- TODO Research Emacs text similarity functions as alternative to Git
+- TODO Investigate Longest Common Subsequence (LCS) algorithms
+- TODO Explore diff-buffers and ediff functionality

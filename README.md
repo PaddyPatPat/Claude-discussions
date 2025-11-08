@@ -30,6 +30,20 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [flycheck-vs-flymake-comparison.md](flycheck-vs-flymake-comparison.md) - Recommends Flycheck for learners due to superior error messages, multi-checker support, and educational feedback quality.
 
+### Emacs Org-Roam & Git Integration
+
+- [emacs-orgmode-git-content-tracking.org](emacs-orgmode-git-content-tracking.org) - Tracks content movements between org-roam files in Zettelkasten workflows using magit, addressing the challenge of committing related file changes.
+
+- [git-move-detection-analysis.org](git-move-detection-analysis.org) - Analyzes Git's built-in move detection (`-M`, `-C` flags) and explains why file-level similarity metrics are unsuitable for detecting small content block movements.
+
+- [emacs-text-comparison-functions.org](emacs-text-comparison-functions.org) - Catalogs Emacs text similarity functions (`compare-windows`, `ediff`, `diff-buffers`) and algorithms (LCS, Levenshtein) for hunk-level comparison.
+
+- [magit-custom-sections-integration.org](magit-custom-sections-integration.org) - Explains magit's section-based architecture, custom section integration via hooks, and direct buffer parsing strategies for accessing diff content.
+
+- [orgmode-content-similarity-detection.org](orgmode-content-similarity-detection.org) - Designs similarity detection algorithms with org-mode normalization (heading levels, whitespace), token-based comparison, and 85% threshold rationale.
+
+- [magit-buffer-parsing-debugging.org](magit-buffer-parsing-debugging.org) - Chronicles iterative prototype development, debugging techniques, common pitfalls, and lessons learned from parsing magit-status buffers.
+
 ### Development Tools
 
 - [development-tool-installation-strategies.md](development-tool-installation-strategies.md) - Explains why project-specific npm/pip installation prevents version conflicts and ensures team consistency.
@@ -97,6 +111,8 @@ A collection of educational content extracted from conversations with Claude, or
 This repository serves as a knowledge base for:
 - Setting up and optimizing Claude Code workflows
 - Integrating AI coding assistants with Emacs
+- Building org-roam and magit extensions for Zettelkasten workflows
+- Developing Elisp tools for git content tracking and similarity detection
 - Building distributed inference systems for LLMs
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems

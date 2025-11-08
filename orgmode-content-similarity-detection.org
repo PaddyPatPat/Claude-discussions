@@ -1,0 +1,498 @@
+#+TITLE: Org-Mode Content Similarity Detection
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs orgmode algorithms text-similarity elisp
+
+* Overview
+
+This document describes the algorithm design for detecting similar content between org-roam files, with specific considerations for org-mode formatting and the 85% similarity threshold.
+
+* Similarity Algorithm Requirements
+
+** Design Goals
+
+1. **High Precision**: Minimize false positives from coincidental matches
+2. **Org-Mode Aware**: Handle heading level changes gracefully
+3. **Size-Based Prioritization**: Match largest hunks first
+4. **Efficient**: Fast enough to run on every magit-status refresh
+5. **Tunable**: Threshold and normalization rules should be configurable
+
+** Similarity Threshold
+
+Target: **85% similarity**
+
+Rationale:
+- Catches legitimate moves with minor edits
+- Handles heading level changes
+- Avoids coincidental single-word matches
+- Allows small wording adjustments during movement
+
+* Normalization for Org-Mode Content
+
+** Why Normalization Is Critical
+
+Identical content can appear different due to:
+
+- Different heading levels (=****= vs =**=)
+- Varying whitespace (spaces vs tabs)
+- Extra blank lines
+- Indentation differences
+
+** Normalization Rules
+
+*** Remove Heading Asterisks
+
+#+BEGIN_SRC elisp
+(defun org-roam-remove-heading-markers (text)
+  "Remove org-mode heading asterisks from TEXT."
+  (replace-regexp-in-string "^\\*+ " "" text))
+#+END_SRC
+
+Example:
+
+#+BEGIN_SRC org
+# Before:
+"**** We need OAuth2 authentication"
+"** We need OAuth2 authentication"
+
+# After normalization:
+"We need OAuth2 authentication"
+"We need OAuth2 authentication"
+
+# Similarity: 100%
+#+END_SRC
+
+*** Normalize Whitespace
+
+#+BEGIN_SRC elisp
+(defun org-roam-normalize-whitespace (text)
+  "Normalize whitespace in TEXT."
+  (let ((normalized text))
+    ;; Multiple spaces/tabs -> single space
+    (setq normalized (replace-regexp-in-string "[ \t]+" " " normalized))
+    ;; Multiple newlines -> single newline
+    (setq normalized (replace-regexp-in-string "\n\n+" "\n" normalized))
+    ;; Trim leading/trailing whitespace
+    (string-trim normalized)))
+#+END_SRC
+
+### Complete Normalization Function
+
+#+BEGIN_SRC elisp
+(defun org-roam-normalize-content (content)
+  "Normalize org-mode content for similarity comparison.
+Removes heading markers, normalizes whitespace, and trims."
+  (let ((normalized content))
+    ;; Remove org heading asterisks (any number of them)
+    (setq normalized (replace-regexp-in-string
+                     "^\\*+ " "" normalized))
+    ;; Normalize whitespace: multiple spaces/tabs -> single space
+    (setq normalized (replace-regexp-in-string
+                     "[ \t\n]+" " " normalized))
+    ;; Trim leading and trailing whitespace
+    (string-trim normalized)))
+#+END_SRC
+
+** Advanced Normalization (Optional)
+
+For even better matching:
+
+*** Remove Org Properties
+
+#+BEGIN_SRC elisp
+;; Remove :PROPERTIES: drawers
+(setq normalized (replace-regexp-in-string
+                 ":PROPERTIES:.*?:END:" "" normalized))
+#+END_SRC
+
+*** Normalize Org Links
+
+#+BEGIN_SRC elisp
+;; Extract link descriptions: [[link][description]] -> description
+(setq normalized (replace-regexp-in-string
+                 "\\[\\[[^]]+\\]\\[\\([^]]+\\)\\]\\]" "\\1" normalized))
+#+END_SRC
+
+*** Case Normalization (Use Carefully)
+
+#+BEGIN_SRC elisp
+;; Downcase for case-insensitive comparison
+;; May cause false positives - use only if needed
+(setq normalized (downcase normalized))
+#+END_SRC
+
+* Similarity Calculation Methods
+
+** Method 1: Simple Character-Based Similarity
+
+Fastest but least sophisticated:
+
+#+BEGIN_SRC elisp
+(defun org-roam-simple-similarity (str1 str2)
+  "Calculate simple character-based similarity between STR1 and STR2.
+Returns percentage (0-100)."
+  (if (or (string-empty-p str1) (string-empty-p str2))
+      0
+    (let* ((len1 (length str1))
+           (len2 (length str2))
+           (max-len (max len1 len2)))
+      (if (string= str1 str2)
+          100
+        ;; Count matching characters at same positions
+        (let ((common-chars 0)
+              (min-len (min len1 len2)))
+          (dotimes (i min-len)
+            (when (= (aref str1 i) (aref str2 i))
+              (setq common-chars (1+ common-chars))))
+          (* 100.0 (/ (float common-chars) max-len)))))))
+#+END_SRC
+
+**Pros**: Very fast, simple to understand
+
+**Cons**: Only works for nearly identical text, doesn't handle word reordering
+
+## Method 2: Levenshtein Distance (Edit Distance)
+
+Counts minimum edits needed to transform one string into another:
+
+#+BEGIN_SRC elisp
+(defun org-roam-levenshtein-distance (str1 str2)
+  "Calculate Levenshtein distance between STR1 and STR2."
+  (let* ((len1 (length str1))
+         (len2 (length str2))
+         (matrix (make-vector (1+ len1) nil)))
+
+    ;; Initialize matrix
+    (dotimes (i (1+ len1))
+      (aset matrix i (make-vector (1+ len2) 0))
+      (aset (aref matrix i) 0 i))
+    (dotimes (j (1+ len2))
+      (aset (aref matrix 0) j j))
+
+    ;; Calculate distances
+    (dotimes (i len1)
+      (dotimes (j len2)
+        (let* ((cost (if (= (aref str1 i) (aref str2 j)) 0 1))
+               (deletion (1+ (aref (aref matrix i) (1+ j))))
+               (insertion (1+ (aref (aref matrix (1+ i)) j)))
+               (substitution (+ (aref (aref matrix i) j) cost)))
+          (aset (aref matrix (1+ i)) (1+ j)
+                (min deletion insertion substitution)))))
+
+    ;; Return final distance
+    (aref (aref matrix len1) len2)))
+
+(defun org-roam-similarity-from-distance (str1 str2)
+  "Calculate similarity percentage from Levenshtein distance."
+  (let* ((distance (org-roam-levenshtein-distance str1 str2))
+         (max-len (max (length str1) (length str2))))
+    (if (zerop max-len)
+        100
+      (* 100.0 (- 1.0 (/ (float distance) max-len))))))
+#+END_SRC
+
+**Pros**: Handles insertions, deletions, substitutions
+
+**Cons**: Slower for long strings, O(n*m) complexity
+
+** Method 3: Token-Based Similarity (Recommended)
+
+Best balance of accuracy and performance for org-mode text:
+
+#+BEGIN_SRC elisp
+(defun org-roam-token-similarity (str1 str2)
+  "Calculate token-based similarity between STR1 and STR2.
+Splits into words and calculates overlap."
+  (if (or (string-empty-p str1) (string-empty-p str2))
+      0
+    (let* ((tokens1 (split-string str1 "[ \t\n]+" t))
+           (tokens2 (split-string str2 "[ \t\n]+" t))
+           (set1 (make-hash-table :test 'equal))
+           (set2 (make-hash-table :test 'equal))
+           (intersection 0))
+
+      ;; Build sets
+      (dolist (token tokens1)
+        (puthash token t set1))
+      (dolist (token tokens2)
+        (puthash token t set2))
+
+      ;; Calculate intersection
+      (maphash (lambda (token _val)
+                 (when (gethash token set2)
+                   (setq intersection (1+ intersection))))
+               set1)
+
+      ;; Jaccard similarity: intersection / union
+      (let* ((union (+ (hash-table-count set1)
+                      (hash-table-count set2)
+                      (- intersection))))
+        (* 100.0 (/ (float intersection) union))))))
+#+END_SRC
+
+**Pros**:
+- Handles word reordering
+- Fast performance
+- Good for org-mode content (sentence/paragraph level)
+
+**Cons**:
+- Doesn't consider word order
+- Might miss subtle changes
+
+** Method 4: LCS (Longest Common Subsequence) Ratio
+
+Most sophisticated, based on diff algorithms:
+
+#+BEGIN_SRC elisp
+(defun org-roam-lcs-length (seq1 seq2)
+  "Calculate length of longest common subsequence between SEQ1 and SEQ2.
+SEQ1 and SEQ2 should be lists of tokens (words)."
+  (let* ((len1 (length seq1))
+         (len2 (length seq2))
+         (matrix (make-vector (1+ len1) nil)))
+
+    ;; Initialize matrix
+    (dotimes (i (1+ len1))
+      (aset matrix i (make-vector (1+ len2) 0)))
+
+    ;; Calculate LCS
+    (dotimes (i len1)
+      (dotimes (j len2)
+        (if (equal (nth i seq1) (nth j seq2))
+            (aset (aref matrix (1+ i)) (1+ j)
+                  (1+ (aref (aref matrix i) j)))
+          (aset (aref matrix (1+ i)) (1+ j)
+                (max (aref (aref matrix (1+ i)) j)
+                     (aref (aref matrix i) (1+ j)))))))
+
+    ;; Return LCS length
+    (aref (aref matrix len1) len2)))
+
+(defun org-roam-lcs-similarity (str1 str2)
+  "Calculate similarity based on LCS ratio."
+  (let* ((tokens1 (split-string str1 "[ \t\n]+" t))
+         (tokens2 (split-string str2 "[ \t\n]+" t))
+         (lcs-len (org-roam-lcs-length tokens1 tokens2))
+         (avg-len (/ (+ (length tokens1) (length tokens2)) 2.0)))
+    (if (zerop avg-len)
+        100
+      (* 100.0 (/ lcs-len avg-len)))))
+#+END_SRC
+
+**Pros**:
+- Considers word order
+- Based on proven diff algorithms
+- Handles insertions and deletions well
+
+**Cons**:
+- More complex implementation
+- Slower for very long texts
+
+* Recommended Complete Implementation
+
+Combining normalization with token-based similarity:
+
+#+BEGIN_SRC elisp
+(defun org-roam-calculate-similarity (text1 text2)
+  "Calculate similarity percentage between TEXT1 and TEXT2.
+Includes org-mode normalization and token-based comparison.
+Returns value 0-100."
+  ;; Handle empty strings
+  (if (or (string-empty-p text1) (string-empty-p text2))
+      0
+
+    ;; Normalize both texts
+    (let ((norm1 (org-roam-normalize-content text1))
+          (norm2 (org-roam-normalize-content text2)))
+
+      ;; Fast path: exact match after normalization
+      (if (string= norm1 norm2)
+          100
+
+        ;; Calculate token-based similarity
+        (let* ((tokens1 (split-string norm1 "[ \t\n]+" t))
+               (tokens2 (split-string norm2 "[ \t\n]+" t))
+               (set1 (make-hash-table :test 'equal))
+               (set2 (make-hash-table :test 'equal))
+               (intersection 0))
+
+          ;; Build token sets
+          (dolist (token tokens1)
+            (puthash token t set1))
+          (dolist (token tokens2)
+            (puthash token t set2))
+
+          ;; Calculate intersection
+          (maphash (lambda (token _val)
+                     (when (gethash token set2)
+                       (setq intersection (1+ intersection))))
+                   set1)
+
+          ;; Jaccard index: intersection / union
+          (let ((union (+ (hash-table-count set1)
+                         (hash-table-count set2)
+                         (- intersection))))
+            (if (zerop union)
+                0
+              (* 100.0 (/ (float intersection) union)))))))))
+#+END_SRC
+
+* Size-Based Prioritization
+
+** Why Size Matters
+
+Single-word matches are likely coincidental:
+
+#+BEGIN_SRC org
+# Many files might contain:
+"authentication"
+
+# But unlikely to coincidentally contain:
+"We need to implement OAuth2 authentication with secure
+token handling and proper session management for the
+user account system."
+#+END_SRC
+
+** Implementation
+
+Sort hunks by size before matching:
+
+#+BEGIN_SRC elisp
+;; Sort deleted hunks by size (largest first)
+(setq deleted-hunks
+      (sort deleted-hunks
+            (lambda (a b)
+              (> (plist-get a :size) (plist-get b :size)))))
+
+;; Sort added hunks by size (largest first)
+(setq added-hunks
+      (sort added-hunks
+            (lambda (a b)
+              (> (plist-get a :size) (plist-get b :size)))))
+#+END_SRC
+
+** Minimum Size Threshold (Optional)
+
+Ignore very small hunks entirely:
+
+#+BEGIN_SRC elisp
+(defconst org-roam-minimum-hunk-size 10
+  "Minimum character count for a hunk to be considered for matching.")
+
+(defun org-roam-filter-small-hunks (hunks)
+  "Remove hunks smaller than minimum size threshold."
+  (seq-filter (lambda (hunk)
+                (>= (plist-get hunk :size) org-roam-minimum-hunk-size))
+              hunks))
+#+END_SRC
+
+* Configuration Variables
+
+Make the system tunable:
+
+#+BEGIN_SRC elisp
+(defgroup org-roam-move-detection nil
+  "Settings for org-roam content move detection."
+  :group 'magit)
+
+(defcustom org-roam-move-similarity-threshold 85
+  "Minimum similarity percentage to consider a match (0-100)."
+  :type 'number
+  :group 'org-roam-move-detection)
+
+(defcustom org-roam-move-minimum-hunk-size 10
+  "Minimum character count for hunks to be considered."
+  :type 'number
+  :group 'org-roam-move-detection)
+
+(defcustom org-roam-move-normalize-case nil
+  "Whether to ignore case when comparing content."
+  :type 'boolean
+  :group 'org-roam-move-detection)
+#+END_SRC
+
+* Testing the Algorithm
+
+** Test Cases
+
+*** Test 1: Exact Match with Heading Change
+
+#+BEGIN_SRC elisp
+(let ((text1 "**** We need OAuth2 authentication")
+      (text2 "** We need OAuth2 authentication"))
+  (org-roam-calculate-similarity text1 text2))
+;; Expected: 100 (or very close after normalization)
+#+END_SRC
+
+*** Test 2: Minor Edit
+
+#+BEGIN_SRC elisp
+(let ((text1 "We need OAuth2 for secure login and data protection")
+      (text2 "We need OAuth2 for secure login and user protection"))
+  (org-roam-calculate-similarity text1 text2))
+;; Expected: ~90-95 (one word different)
+#+END_SRC
+
+*** Test 3: Significant Rewrite
+
+#+BEGIN_SRC elisp
+(let ((text1 "OAuth2 authentication is required")
+      (text2 "The system needs secure login functionality"))
+  (org-roam-calculate-similarity text1 text2))
+;; Expected: <50 (different concepts, some shared words)
+#+END_SRC
+
+*** Test 4: Complete Mismatch
+
+#+BEGIN_SRC elisp
+(let ((text1 "OAuth2 authentication implementation")
+      (text2 "Database schema design patterns"))
+  (org-roam-calculate-similarity text1 text2))
+;; Expected: <10 (no meaningful overlap)
+#+END_SRC
+
+* Performance Considerations
+
+** Optimization Strategies
+
+1. **Early Exit**: Check exact match before expensive calculations
+2. **Size Filtering**: Skip very small hunks entirely
+3. **Hash Tables**: Use for O(1) token lookups
+4. **Lazy Evaluation**: Only calculate similarity for promising pairs
+
+** Expected Performance
+
+For typical org-roam workflow:
+
+- Files: 5-20 modified files
+- Hunks per file: 1-10
+- Total comparisons: <200 hunk pairs
+- Time per comparison: <10ms
+- Total time: <2 seconds (acceptable for manual refresh)
+
+** Profiling
+
+Use Emacs profiler to identify bottlenecks:
+
+#+BEGIN_SRC elisp
+(profiler-start 'cpu)
+;; Run detection
+(org-roam-detect-moves)
+(profiler-stop)
+(profiler-report)
+#+END_SRC
+
+* Related Topics
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]]
+- [[file:emacs-text-comparison-functions.org][Emacs Text Comparison Functions]]
+- [[file:magit-custom-sections-integration.org][Magit Custom Sections Integration]]
+- [[file:magit-buffer-parsing-debugging.org][Magit Buffer Parsing and Debugging]]
+
+* TODO Tasks
+
+- TODO Implement and test all similarity algorithms
+- TODO Benchmark performance with real org-roam files
+- TODO Add configuration options via customize interface
+- TODO Create test suite with representative content pairs
+- TODO Optimize for common cases (exact matches, heading changes)

@@ -1,0 +1,283 @@
+#+TITLE: Emacs Text Comparison Functions
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs elisp text-comparison diff algorithms
+
+* Overview
+
+This document catalogs Emacs functions and algorithms available for text similarity detection, which can serve as alternatives to Git's move detection for finding moved content between org-roam files.
+
+* Built-in Emacs Comparison Functions
+
+** compare-windows
+
+Interactive function for finding matching content between two buffers:
+
+#+BEGIN_SRC elisp
+(compare-windows &optional IGNORE-WHITESPACE)
+#+END_SRC
+
+**Features**:
+- Finds hunks of content that are the same between two buffers
+- Can accept numeric arguments to ignore whitespace differences
+- Works on visible portions of buffers
+- Foundation is useful for hunk matching
+
+**Limitations**:
+- Limited to visible portions
+- Interactive rather than programmatic
+- Not optimized for batch comparison
+
+**Use Case**: Demonstrates that Emacs has text similarity capabilities we can build upon
+
+** ediff Family
+
+Suite of functions for buffer/file comparison:
+
+*** diff-buffers
+
+Compares contents of two specified buffers:
+
+#+BEGIN_SRC elisp
+(diff-buffers BUFFER-A BUFFER-B &optional SWITCHES NO-ASYNC)
+#+END_SRC
+
+**Features**:
+- Uses external diff utility with customizable options
+- Can ignore whitespace with =-w= flag
+- Returns line-by-line differences
+- Programmatically accessible
+
+**Example**:
+
+#+BEGIN_SRC elisp
+;; Compare two buffers, ignoring whitespace
+(diff-buffers "file1.org" "file2.org" "-w" t)
+#+END_SRC
+
+*** ediff-windows-wordwise
+
+Word-by-word comparison between windows:
+
+#+BEGIN_SRC elisp
+(ediff-windows-wordwise)
+#+END_SRC
+
+**Features**:
+- Fine-grained comparison at word level
+- Interactive visual display
+- Can identify small changes within lines
+
+*** Other diff utilities
+
+Emacs provides several diff-related functions:
+
+- =diff-backup= - Compare file with its backup
+- =diff-buffer-with-file= - Compare buffer with file on disk
+- =diff-buffers= - Compare two buffers (most useful for our purpose)
+
+* Algorithmic Approaches
+
+** Longest Common Subsequence (LCS)
+
+*** What It Is
+
+LCS finds the longest sequence of elements common to two sequences:
+
+#+BEGIN_SRC text
+Sequence A: "We need OAuth2 for authentication"
+Sequence B: "OAuth2 needed for auth system"
+
+LCS: "OAuth2 for auth"
+#+END_SRC
+
+*** Why It's Relevant
+
+- Used by Unix =diff= program to find longest common subsequence of lines
+- Forms the basis of revision control systems like Git
+- Well-understood algorithm with proven implementations
+
+*** Implementation Options
+
+Could implement in Elisp:
+
+#+BEGIN_SRC elisp
+(defun simple-lcs (str1 str2)
+  "Calculate Longest Common Subsequence of two strings."
+  ;; Simple LCS implementation for line-based comparison
+  ;; Returns length of common subsequence
+  )
+#+END_SRC
+
+Or leverage existing diff infrastructure and parse results.
+
+** Sequence-Based String Similarity
+
+Multiple methods available for analyzing similarity:
+
+- **Edit Distance** (Levenshtein): Number of single-character edits needed
+- **Jaccard Similarity**: Size of intersection / size of union
+- **Cosine Similarity**: Angle between vector representations
+- **LCS Ratio**: (LCS length / average length) * 100
+
+*** Recommended Approach for Org-Mode
+
+Line-based LCS is most appropriate because:
+
+- Org-mode content is line-oriented
+- Heading changes affect whole lines
+- Paragraph boundaries are line-based
+- Compatible with diff output format
+
+* Proposed Implementation Strategy
+
+** Phase 1: Leverage Emacs diff Infrastructure
+
+Instead of reinventing comparison algorithms:
+
+1. Use =diff-buffers= or similar to get line-by-line differences
+2. Parse the output to identify deleted/added hunks
+3. Implement LCS-based similarity matching between hunks
+4. Focus on getting data, not reimplementing diff
+
+** Phase 2: Custom Hunk Similarity Calculator
+
+Implement similarity calculation in Elisp:
+
+#+BEGIN_SRC elisp
+(defun org-roam-calculate-similarity (text1 text2)
+  "Calculate similarity between two text blocks.
+Returns percentage similarity (0-100)."
+  (let* ((lines1 (split-string text1 "\n" t))
+         (lines2 (split-string text2 "\n" t))
+         (lcs-length (calculate-lcs-length lines1 lines2))
+         (avg-length (/ (+ (length lines1) (length lines2)) 2.0)))
+    (* (/ lcs-length avg-length) 100)))
+#+END_SRC
+
+**Features**:
+- Line-based comparison (good for org-mode)
+- Returns percentage similarity
+- Can be customized for org-mode specific normalization
+
+** Phase 3: Org-Mode Specific Normalization
+
+Handle org-mode formatting before comparison:
+
+#+BEGIN_SRC elisp
+(defun org-roam-normalize-content (text)
+  "Normalize org-mode content for similarity comparison."
+  (let ((normalized text))
+    ;; Remove heading asterisks (any level)
+    (setq normalized (replace-regexp-in-string
+                     "^\\*+ " "" normalized))
+    ;; Normalize whitespace
+    (setq normalized (replace-regexp-in-string
+                     "[ \t]+" " " normalized))
+    ;; Trim leading/trailing whitespace
+    (string-trim normalized)))
+#+END_SRC
+
+**Example**:
+
+#+BEGIN_SRC org
+# Before normalization:
+"**** We need OAuth2 authentication"
+"** We need OAuth2 authentication"
+
+# After normalization:
+"We need OAuth2 authentication"
+"We need OAuth2 authentication"
+
+# Similarity: 100%
+#+END_SRC
+
+* Extracting Hunks from Git Diff
+
+** Key Insight
+
+We don't need to compare file versions directly. We can:
+
+1. Get git diff output for each modified file
+2. Extract deleted hunks (lines starting with =-=)
+3. Extract added hunks (lines starting with =+=)
+4. Compare deleted hunks against added hunks across different files
+
+** Parsing Git Diff Output
+
+Git diff format:
+
+#+BEGIN_SRC diff
+diff --git a/file1.org b/file1.org
+@@ -1,7 +1,6 @@
+ * Test file 1.
+-** Test file 1 subheading 1.
+-And some text.
++** Modified text here.
+#+END_SRC
+
+Extract deleted and added lines:
+
+#+BEGIN_SRC elisp
+(defun extract-diff-hunks (diff-output filename)
+  "Extract deleted and added hunks from git diff output."
+  (let ((deleted-hunks '())
+        (added-hunks '())
+        (lines (split-string diff-output "\n")))
+    (dolist (line lines)
+      (cond
+       ((string-prefix-p "-" line)
+        (push (cons filename (substring line 1)) deleted-hunks))
+       ((string-prefix-p "+" line)
+        (push (cons filename (substring line 1)) added-hunks))))
+    (cons deleted-hunks added-hunks)))
+#+END_SRC
+
+** Why This Works
+
+Magit already displays this diff information in =magit-status=:
+
+- Shows deleted lines with =-= prefix
+- Shows added lines with =+= prefix
+- Groups by file
+- Already parsed and formatted
+
+We just need to:
+1. Access this existing data from magit's buffer
+2. Extract the hunks
+3. Run our similarity matching
+
+* Comparison with Git's Approach
+
+** What Git Does (Doesn't Work for Us)
+
+- Calculates file-level similarity
+- Applies threshold to entire files
+- Optimized for whole-file renames
+
+** What We Need to Do
+
+- Calculate hunk-level similarity
+- Apply threshold to individual text blocks
+- Optimized for small content movements
+
+** Advantage of Emacs Approach
+
+- Full control over similarity algorithm
+- Can normalize org-mode specific formatting
+- Can prioritize by hunk size
+- Can tune threshold for specific workflow
+
+* Related Topics
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]]
+- [[file:git-move-detection-analysis.org][Git Move Detection Analysis]]
+- [[file:orgmode-content-similarity-detection.org][Org-Mode Content Similarity Detection]]
+- [[file:magit-custom-sections-integration.org][Magit Custom Sections Integration]]
+
+* TODO Tasks
+
+- TODO Implement simple LCS algorithm in Elisp
+- TODO Create org-mode normalization function
+- TODO Test similarity calculation with real org-roam content
+- TODO Integrate with git diff output parsing

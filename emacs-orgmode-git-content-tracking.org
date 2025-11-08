@@ -1,0 +1,158 @@
+#+TITLE: Emacs Org-Roam Git Content Tracking
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs orgmode magit git zettelkasten workflow
+
+* Overview
+
+This document describes the challenge of tracking content movements between org-roam files in a Zettelkasten workflow using Emacs magit. The goal is to streamline git commits when content is refactored across multiple org-mode files.
+
+* The Problem
+
+** Workflow Context
+
+When maintaining a Zettelkasten in org-roam with magit for version control, content frequently moves between files during refactoring. The standard git workflow makes it difficult to:
+
+- Identify which files are related through content movement
+- Commit related changes together (source and destination files)
+- Separate multiple independent moves into distinct commits
+
+** Current Challenges
+
+*** Multiple Changes Before Committing
+
+The commit process takes too long to perform after each individual change, leading to accumulation of multiple modifications:
+
+- Several content moves between different file pairs
+- Mix of pure additions and content relocations
+- Difficulty distinguishing between related and unrelated changes
+
+*** Finding Related Files
+
+When content moves from one file to another:
+
+- Both files appear in the list of unstaged changes
+- Must manually locate both source and destination files
+- No visual indication that files are related through moved content
+- Time-consuming to group related files for a single commit
+
+** What Constitutes a Content Move
+
+Content moves in this workflow involve:
+
+- Arbitrary text blocks (not whole files)
+- Can be complete paragraphs or partial sentences
+- May contain org-roam links
+- Often involves heading level changes (e.g., =**** Heading= → =** Heading=)
+
+** Movement Methods
+
+Content typically moves through:
+
+- Emacs functions that send org-mode headings and text to another document
+- Traditional cut and paste operations
+- Always between files that will show as changed in magit-status
+
+* Requirements
+
+** Detection Requirements
+
+*** When to Detect
+- Move detection should occur when running =magit-status=
+- Not real-time during editing
+- Not on every file save
+
+*** What to Detect
+- Hunk-level similarity between changed files
+- Only between files already showing modifications in magit-status
+- Focus on org-roam files (all org-mode underneath)
+
+*** Confidence Level
+- Only flag high-confidence moves (>85% similarity)
+- Avoid false positives from coincidentally similar text
+- Prioritize largest hunks first to avoid single-word matches
+
+** User Interface Requirements
+
+*** Magit Status Integration
+- Display detected moves in a custom magit-status section
+- Use existing magit folding/expansion functionality
+- One section per source→destination file pair
+- Multiple hunks from one file to another shown within that section
+
+*** Interaction Model
+- User should still manually stage files
+- Simplified grouping of related files for commits
+- Multiple hunks moved to same file = single commit
+- Multiple hunks moved to different files = separate commits
+
+** Technical Constraints
+
+*** Similarity Detection
+- Hunk-level similarity only (not file-level)
+- Threshold: >85% similarity
+- Must handle org-mode heading level changes gracefully
+- Line-based comparison suitable for org-mode content
+
+*** Scope Limitations
+- Only analyze modified files visible in magit-status
+- No need to check untracked or unmodified files
+- All moves occur between org-roam (org-mode) files
+
+* Workflow Timeline
+
+Typical user workflow:
+
+1. Make several content moves between org-roam files
+2. Make other edits to various files
+3. Run =magit-status= to review changes
+4. See detected moves highlighted in custom section
+5. Stage and commit each move separately
+6. Continue with other commits
+
+* Content Similarity Considerations
+
+** Org-Mode Specific Normalization
+
+Content similarity must account for org-mode formatting differences:
+
+#+BEGIN_SRC org
+# Same content, different heading levels:
+**** We need to implement OAuth2 for secure login and data protection.
+** We need to implement OAuth2 for secure login and data protection.
+# Should score ~95% similarity
+#+END_SRC
+
+** Similarity Threshold Rationale
+
+85% threshold chosen because:
+
+- High enough to avoid coincidental matches
+- Low enough to catch legitimate moves with minor edits
+- Accommodates heading level changes
+- Allows for small wording adjustments during movement
+
+** Size-Based Prioritization
+
+Largest hunks should be matched first:
+
+- Single-word matches are likely coincidental
+- Multi-line paragraph moves are intentional
+- Size filtering prevents false positives
+- Improves commit organization
+
+* Related Topics
+
+- [[file:git-move-detection-analysis.org][Git Move Detection Analysis]]
+- [[file:emacs-text-comparison-functions.org][Emacs Text Comparison Functions]]
+- [[file:magit-custom-sections-integration.org][Magit Custom Sections Integration]]
+- [[file:orgmode-content-similarity-detection.org][Org-Mode Content Similarity Detection]]
+- [[file:magit-buffer-parsing-debugging.org][Magit Buffer Parsing and Debugging]]
+
+* TODO Tasks
+
+- TODO Implement hunk extraction from magit-status buffer
+- TODO Create similarity calculation algorithm with org-mode normalization
+- TODO Design custom magit section for displaying detected moves
+- TODO Add size-based prioritization to avoid single-word matches
+- TODO Test with real org-roam workflow scenarios
