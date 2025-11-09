@@ -1,0 +1,287 @@
+#+TITLE: Tailscale DNS Configuration
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: tailscale dns vpn networking exit-node magicdns
+
+* Overview
+
+Tailscale provides integrated DNS functionality called MagicDNS, which enables machines on your Tailscale network (tailnet) to reach each other using simple hostnames. When running Tailscale as an exit node or with subnet routing, proper DNS configuration becomes critical for routing traffic correctly.
+
+This document covers Tailscale's DNS features, common configuration issues, and solutions for the "DNS config is not ideal" warning.
+
+* Tailscale DNS Features
+
+** MagicDNS
+
+MagicDNS is Tailscale's built-in DNS service that provides:
+- Automatic hostname resolution for devices in your tailnet
+- Simple names like =hostname= instead of IP addresses
+- Works without manual DNS configuration
+- Supports both IPv4 and IPv6
+
+*** How It Works
+- Tailscale runs a local DNS proxy on the machine
+- DNS queries for tailnet hostnames are intercepted and resolved
+- Other queries pass through to your regular DNS servers (unless overridden)
+
+** DNS Search Domains
+
+Tailscale can add search domains to your DNS configuration:
+- =<tailnet-name>.ts.net= - Your tailnet's domain
+- Allows using just the hostname without the full domain
+
+** Custom DNS Nameservers
+
+Tailscale allows configuring custom DNS servers that apply to your entire tailnet:
+- Split DNS: Different nameservers for different domains
+- Global DNS: Override all DNS queries
+- Useful for accessing internal company DNS servers
+
+* Exit Node DNS Behavior
+
+** What is an Exit Node?
+
+An exit node is a Tailscale machine that routes all your internet traffic, similar to a traditional VPN. This affects DNS in important ways.
+
+** DNS Routing with Exit Nodes
+
+When using a Tailscale exit node:
+- DNS queries should ideally go through the exit node
+- This prevents DNS leaks (querying your local DNS while traffic routes elsewhere)
+- Ensures geographic consistency (DNS results match exit node location)
+- Prevents split-horizon DNS issues
+
+** Common Issues
+
+*** DNS Queries Not Using Exit Node
+If DNS queries don't go through the exit node:
+- Your ISP or local network can see which domains you're accessing
+- You might get geographically incorrect DNS results
+- Split-horizon DNS might not work correctly
+
+*** The "DNS config is not ideal" Warning
+
+Tailscale health checks may report: "/etc/resolv.conf overwritten" or "DNS config is not ideal"
+
+This typically means:
+- Your local DNS configuration is overriding Tailscale's DNS settings
+- DNS queries might not be routed through your exit node
+- MagicDNS might not be functioning correctly
+
+* Configuring Tailscale DNS
+
+** Accepting Tailscale DNS
+
+The =--accept-dns= flag controls whether Tailscale manages your DNS configuration.
+
+*** Enable DNS Acceptance
+#+BEGIN_SRC bash
+sudo tailscale up --accept-dns
+#+END_SRC
+
+*** Enable DNS Acceptance Explicitly
+#+BEGIN_SRC bash
+sudo tailscale up --accept-dns=true
+#+END_SRC
+
+*** Disable DNS Acceptance
+#+BEGIN_SRC bash
+sudo tailscale up --accept-dns=false
+#+END_SRC
+
+** Exit Node Configuration
+
+When advertising your machine as an exit node:
+
+#+BEGIN_SRC bash
+# Advertise as exit node with LAN access
+sudo tailscale up --advertise-exit-node --exit-node-allow-lan-access
+#+END_SRC
+
+The =--exit-node-allow-lan-access= flag allows devices using this exit node to still access their local LAN resources (printers, file shares, etc.).
+
+** Combined Configuration for Exit Nodes
+
+For a Tailscale node that serves as an exit node and provides subnet routing:
+
+#+BEGIN_SRC bash
+# Exit node with DNS acceptance and LAN access
+sudo tailscale up \
+  --advertise-exit-node \
+  --exit-node-allow-lan-access \
+  --accept-dns
+#+END_SRC
+
+For subnet routing:
+
+#+BEGIN_SRC bash
+# Advertise specific subnets with DNS acceptance
+sudo tailscale up \
+  --advertise-routes=192.168.1.0/24,10.0.0.0/8 \
+  --accept-dns
+#+END_SRC
+
+** Checking Current Configuration
+
+#+BEGIN_SRC bash
+# View current Tailscale status including DNS config
+tailscale status
+
+# Check detailed network settings
+tailscale netcheck
+
+# View DNS configuration
+tailscale debug dns
+#+END_SRC
+
+* Troubleshooting DNS Issues
+
+** Health Check Warnings
+
+*** "/etc/resolv.conf overwritten"
+
+This warning indicates that something is modifying /etc/resolv.conf after Tailscale configures it.
+
+Possible causes:
+- NetworkManager is actively managing DNS
+- systemd-resolved is overriding settings
+- DHCP client (dhclient) is updating DNS
+- Another VPN or network service is interfering
+
+**** Solutions
+
+1. Identify what's managing DNS (see [[file:linux-dns-management-systems.org][Linux DNS Management Systems]])
+
+2. Configure that system to work with Tailscale:
+
+***** For NetworkManager
+#+BEGIN_SRC bash
+# Configure NetworkManager to use Tailscale's DNS
+# Edit /etc/NetworkManager/NetworkManager.conf
+[main]
+dns=none
+
+# Then restart NetworkManager
+sudo systemctl restart NetworkManager
+#+END_SRC
+
+***** For systemd-resolved
+#+BEGIN_SRC bash
+# systemd-resolved usually works well with Tailscale
+# Ensure Tailscale can update resolved's configuration
+sudo systemctl restart systemd-resolved
+sudo tailscale up --accept-dns
+#+END_SRC
+
+** Testing DNS Resolution
+
+*** Test MagicDNS
+#+BEGIN_SRC bash
+# Try to ping another machine in your tailnet by hostname
+ping other-machine
+
+# Full domain name
+ping other-machine.your-tailnet.ts.net
+#+END_SRC
+
+*** Test DNS Servers
+#+BEGIN_SRC bash
+# Check which DNS servers are actually being used
+resolvectl status  # if using systemd-resolved
+
+# Or check resolv.conf
+cat /etc/resolv.conf
+
+# Test DNS resolution with specific server
+nslookup google.com
+dig google.com
+#+END_SRC
+
+*** Verify DNS is Going Through Exit Node
+
+#+BEGIN_SRC bash
+# Check your apparent IP address (should match exit node)
+curl ifconfig.me
+
+# Check DNS leak
+curl https://www.dnsleaktest.com/
+#+END_SRC
+
+** Split DNS Considerations
+
+When you need some DNS queries to go to local DNS and others through Tailscale:
+
+- Use Tailscale's split DNS feature in the admin console
+- Configure search domains appropriately
+- Ensure your local DNS manager (NetworkManager, systemd-resolved) supports split DNS
+
+* Integration with Linux DNS Systems
+
+** NetworkManager Integration
+
+NetworkManager has built-in Tailscale support:
+- Detects Tailscale interfaces
+- Can be configured to not override Tailscale DNS
+- May need configuration tweaking for exit nodes
+
+See [[file:troubleshooting-linux-dns.org][Troubleshooting Linux DNS]] for diagnostic commands.
+
+** systemd-resolved Integration
+
+systemd-resolved generally works well with Tailscale:
+- Tailscale can configure per-interface DNS via resolved's D-Bus API
+- MagicDNS integrates as a DNS server for the Tailscale interface
+- Split DNS works naturally with resolved's link-specific DNS
+
+** Static /etc/resolv.conf
+
+If using a static /etc/resolv.conf:
+- Tailscale cannot automatically update DNS
+- You must manually configure DNS servers
+- Consider using =--accept-dns=false= and managing DNS yourself
+
+* Best Practices
+
+** For Exit Nodes
+
+1. Always use =--accept-dns= unless you have specific reasons not to
+2. Enable =--exit-node-allow-lan-access= if users need local network access
+3. Monitor DNS configuration for conflicts
+4. Test DNS leaks regularly
+
+** For Subnet Routers
+
+1. Use =--accept-dns= to ensure proper DNS resolution
+2. Configure split DNS if needed (some queries local, some through Tailscale)
+3. Document DNS behavior for users
+
+** For General Tailscale Nodes
+
+1. Enable MagicDNS in the Tailscale admin console
+2. Use =--accept-dns= for seamless integration
+3. Test that you can reach other tailnet machines by hostname
+
+** Security Considerations
+
+- DNS queries can reveal browsing habits
+- When using exit nodes, ensure DNS goes through the exit node to prevent leaks
+- Monitor for DNS hijacking (queries going to unexpected servers)
+- Use DNSSEC validation when possible (systemd-resolved supports this)
+
+* Related Topics
+
+- [[file:linux-dns-management-systems.org][Linux DNS Management Systems]] - Understanding the underlying DNS infrastructure
+- [[file:troubleshooting-linux-dns.org][Troubleshooting Linux DNS]] - Diagnostic procedures and commands
+
+* References
+
+- Tailscale DNS documentation: https://tailscale.com/kb/1054/dns/
+- Tailscale Exit Nodes: https://tailscale.com/kb/1103/exit-nodes/
+- MagicDNS: https://tailscale.com/kb/1081/magicdns/
+
+* TODO Tasks
+
+- TODO Test DNS failover when exit node becomes unavailable
+- TODO Document split DNS configuration for specific use cases
+- TODO Test interaction with Pi-hole or other DNS filtering solutions
+- TODO Document DNS configuration in containerized Tailscale deployments

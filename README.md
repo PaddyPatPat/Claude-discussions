@@ -92,6 +92,18 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [multi-format-document-processing.md](multi-format-document-processing.md) - Format-specific parsers and unified processing for org-mode, Markdown, PDF, HTML, and EPUB documents.
 
+## Linux Systems & Networking (Org Mode)
+
+This section contains org-mode formatted documentation for cross-referencing and integration with Emacs org-roam workflows.
+
+### DNS Management & Configuration
+
+- [linux-dns-management-systems.org](linux-dns-management-systems.org) - Overview of DNS management tools on Linux (NetworkManager, systemd-resolved, systemd-networkd, resolvconf, dhclient), their coexistence, and how to identify which system is active.
+
+- [tailscale-dns-configuration.org](tailscale-dns-configuration.org) - Tailscale-specific DNS setup including MagicDNS, exit node DNS routing, the `--accept-dns` flag, and resolving "DNS config is not ideal" warnings.
+
+- [troubleshooting-linux-dns.org](troubleshooting-linux-dns.org) - Comprehensive diagnostic procedures for DNS issues: checking active services, interpreting /etc/resolv.conf, testing resolution, and solving common problems like service conflicts.
+
 ## Repository Purpose
 
 This repository serves as a knowledge base for:
@@ -101,5 +113,6 @@ This repository serves as a knowledge base for:
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems
 - Processing documents for vector embeddings and retrieval
+- Linux system administration including DNS, networking, and VPN configuration
 
 All content has been extracted from actual conversations, deduplicated, and organized into focused single-topic files for easy reference.
