@@ -1,0 +1,174 @@
+#+TITLE: Magit Org-Mode Move Detection Project
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit orgmode zettelkasten project
+
+* Project Overview
+
+** Purpose
+
+Create an Emacs extension that detects when content has been moved between org-roam files and presents these moves in a custom Magit status section, allowing for streamlined commit workflows in Zettelkasten maintenance.
+
+** Problem Statement
+
+When maintaining a Zettelkasten in org-roam files with Magit for version control, users frequently move content between files during refactoring. The current workflow challenges:
+
+- Multiple content moves accumulate before committing
+- Finding both source and destination files in unstaged changes is tedious
+- No visual indication of which files are related through content movement
+- Committing each move separately requires manual file grouping
+
+** Solution Approach
+
+Build a Magit extension that:
+
+1. Automatically detects content moves when =magit-status= refreshes
+2. Groups contiguous diff lines into multi-line hunks
+3. Compares deleted hunks against added hunks across different files
+4. Displays high-confidence matches (>85% similarity) in custom Magit section
+5. Allows users to stage and commit related file pairs
+
+** Scope
+
+*** In Scope
+
+- Detection of arbitrary text block movements (paragraphs, sentences, fragments)
+- Hunk-level similarity matching using Levenshtein distance
+- Org-mode specific normalization (heading levels, whitespace)
+- Custom Magit status section showing detected moves
+- Size-based prioritization (largest hunks first)
+- Automatic refresh on magit-status update
+
+*** Out of Scope (Deferred)
+
+- Automatic staging of related files
+- Performance optimization for large repositories
+- User configuration interface
+- Tracking moves to/from untracked files
+- Sophisticated org-mode structure analysis
+- Caching of similarity calculations
+
+** Key Design Decisions
+
+*** Abandon Git's Built-in Move Detection
+
+Git's =-M= and =-C= flags use file-level similarity:
+- =git diff -M85%= requires 85% of entire file to match
+- Moving one paragraph from 1000-line file = ~0.1% similarity
+- Completely unsuitable for small content block tracking
+
+**Decision**: Implement custom hunk-level similarity matching in Elisp
+
+*** Use Hunk-Level Similarity Only
+
+Compare individual deleted/added text blocks, not whole files:
+- Extract hunks from magit-status buffer directly
+- Compare each deleted hunk against each added hunk
+- Calculate similarity on normalized content
+
+**Threshold**: 85% similarity for high-confidence matches
+
+*** Group Contiguous Diff Lines
+
+Treat consecutive deleted/added lines as single logical units:
+
+#+BEGIN_SRC diff
+# Treated as ONE hunk:
+-** Test heading
+-And some text
+#+END_SRC
+
+Rather than two separate one-line hunks.
+
+*** Choose Levenshtein Distance Algorithm
+
+Selected over simpler alternatives because:
+- Handles character insertions/deletions/substitutions
+- Works well with heading level changes (=****= → =**=)
+- Industry-standard text similarity measure
+- Good balance of accuracy and simplicity
+
+** Success Criteria
+
+*** Minimum Viable Product
+
+1. Correctly identifies moved content with >85% similarity
+2. Groups multi-line related content as single hunks
+3. Displays detected moves in magit-status buffer
+4. Handles org-mode heading level changes
+5. Prioritizes by hunk size (largest first)
+
+*** Test Case Success
+
+Given this magit-status:
+
+#+BEGIN_SRC diff
+modified   file1.org
+-** Test file 1 subheading 1.
+-And some text.
+
+modified   file2.org
++** Test file 1 subheading 1.
++And some text.
+#+END_SRC
+
+Should detect: file1.org → file2.org move with ~100% similarity
+
+** Related Documentation
+
+- [[file:emacs-orgmode-git-content-tracking.org][Emacs Org-Roam Git Content Tracking]] - Original problem exploration
+- [[file:git-move-detection-analysis.org][Git Move Detection Analysis]] - Why Git's -M flag doesn't work
+- [[file:magit-buffer-parsing-debugging.org][Magit Buffer Parsing]] - Technical implementation details
+- [[file:magit-move-detection-requirements.org][Functional Requirements]] - Detailed requirements specification
+- [[file:magit-move-detection-similarity-algorithms.org][Similarity Algorithm Comparison]]
+- [[file:magit-move-detection-prototype-evolution.org][Prototype Development Log]]
+
+* Project Status
+
+** Current Version
+
+Prototype v2.5 (November 2025)
+
+** Status: Working Prototype
+
+Core functionality implemented and tested:
+- ✅ Multi-line hunk grouping working
+- ✅ Levenshtein distance similarity working
+- ✅ 100% detection on test case
+- ✅ Org-mode normalization handling heading changes
+- ✅ Size-based prioritization implemented
+
+** Next Steps
+
+1. Integrate into actual Magit status section (not just debug buffer)
+2. Add staging commands for file pairs
+3. Implement section refresh after commits
+4. Performance testing with larger repositories
+5. User configuration options (threshold, min size)
+
+* Quick Start
+
+** Installation
+
+#+BEGIN_SRC elisp
+;; Load the prototype
+(load-file "path/to/magit-move-detection.el")
+#+END_SRC
+
+** Usage
+
+1. Make changes involving content moves between org-roam files
+2. Open magit-status: =M-x magit-status=
+3. Run detection: =M-x org-roam-move-debug=
+4. Review detected moves in =*Org-Roam Move Debug*= buffer
+
+** Example Output
+
+#+BEGIN_SRC text
+=== POTENTIAL MOVES (by size) ===
+
+MOVE: file1.org → file2.org
+Similarity: 100.0% | Size: 43
+Content: Test file 1 subheading 1.
+And some text.
+#+END_SRC

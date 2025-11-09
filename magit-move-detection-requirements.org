@@ -1,0 +1,386 @@
+#+TITLE: Magit Move Detection - Functional Requirements
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit requirements specification
+
+* Overview
+
+This document specifies the functional requirements for the Magit Org-Mode Move Detection extension, derived from user workflow analysis and iterative prototype development.
+
+* Content Move Definition
+
+** What Constitutes a Content Move
+
+A content move is defined as:
+
+- Arbitrary text blocks that may contain org-roam links
+- Can be whole paragraphs, sentences, or sentence fragments
+- May include org-mode structural elements (headings, lists, etc.)
+- Contiguous lines treated as single logical unit
+
+** Movement Methods
+
+Content typically moves through:
+
+- Emacs functions that send org-mode headings + text to another document
+- Manual cut and paste operations
+- Always between files that show as modified in magit-status
+
+** Movement Never Occurs Between
+
+- A modified file and an untracked file
+- A modified file and an unmodified file
+- Files that won't both appear in magit-status
+
+This constraint significantly simplifies detection logic.
+
+* Detection Requirements
+
+** Detection Timing
+
+Content move detection should occur:
+
+- **Automatically** when =magit-status= refreshes
+- Not in real-time during editing
+- Not on every file save
+
+** Workflow Timeline
+
+Typical user workflow:
+
+1. User makes several content moves across files
+2. User makes other edits to various files
+3. User runs =magit-status= to review changes
+4. System automatically detects and displays moves
+5. User stages and commits each move separately
+
+**Key Constraint**: Commit process must not interrupt editing flow, hence batch detection on status refresh.
+
+** Identification Method
+
+Content moves identified via:
+
+- **Text similarity matching** (not org-roam link analysis)
+- **Hunk-level comparison** (not file-level)
+- **Levenshtein distance algorithm** for character-level similarity
+- **Org-mode aware normalization** before comparison
+
+** Confidence Levels
+
+*** High Confidence (>85% similarity)
+
+- Displayed in main "Potential Moves" section
+- User can stage these with confidence
+- Example: Heading level change only
+
+*** Medium Confidence (50-85% similarity)
+
+- Potentially shown in separate section (future enhancement)
+- Requires user review before staging
+- Example: Content edited while moving
+
+*** Low Confidence (<50% similarity)
+
+- Not displayed to avoid false positives
+- Example: Coincidentally similar text
+
+** Similarity Threshold
+
+Primary threshold: **85% hunk-level similarity**
+
+Rationale:
+- Catches legitimate moves with minor edits
+- Handles org-mode heading level changes (=****= → =**=)
+- Avoids coincidental single-word matches
+- Allows small wording adjustments during movement
+
+* Hunk Grouping Requirements
+
+## Multi-Line Hunk Definition
+
+Contiguous deleted or added lines should be grouped as single hunks:
+
+#+BEGIN_SRC diff
+# These three lines form ONE hunk:
+-** Heading
+-First paragraph.
+-Second paragraph.
+#+END_SRC
+
+** Grouping Rules
+
+1. **Start Group**: First line with =-= or =+= prefix
+2. **Continue Group**: Subsequent lines with same prefix
+3. **End Group**: Line with different prefix or no prefix
+4. **Filter Empty Lines**: Remove blank/whitespace-only lines from groups
+
+** Example Grouping
+
+#+BEGIN_SRC diff
+modified   file1.org
+-** Deleted heading          # Start deletion group
+-With some content           # Continue deletion group
+                             # End deletion group (blank line)
++** Added heading            # Start addition group
++Different content           # Continue addition group
+#+END_SRC
+
+Result:
+- Deleted hunk: "=** Deleted heading\nWith some content=" (2 lines, ~40 chars)
+- Added hunk: "=** Added heading\nDifferent content=" (2 lines, ~35 chars)
+
+* Size-Based Prioritization
+
+** Largest Hunks First
+
+Display detected moves sorted by size (largest first) because:
+
+- Large multi-line moves are almost certainly intentional
+- Single-word matches likely coincidental
+- Helps user focus on significant changes first
+
+** Minimum Size Threshold
+
+Current: **No minimum** (all sizes considered)
+
+Future enhancement: Configurable minimum (e.g., 10 characters)
+
+** Size Calculation
+
+Size = total character count of hunk content (after grouping, before normalization)
+
+* User Interface Requirements
+
+** Display Location
+
+Detected moves displayed in:
+
+- Custom section in magit-status buffer
+- Collapsible/expandable like existing magit sections
+- Positioned logically with other change sections
+
+** Section Structure
+
+#+BEGIN_SRC text
+Content Moves (2)
+  file1.org → file2.org (100% similarity, 43 chars)
+    ** Test file 1 subheading 1.
+    And some text.
+
+  file3.org → file4.org (92% similarity, 28 chars)
+    ** Another moved heading.
+#+END_SRC
+
+** Display Format: One Section Per File Pair
+
+- Each source→destination pair gets its own subsection
+- Multiple hunks moved from file1 to file2 shown together
+- Multiple hunks moved from file1 to different files shown separately
+
+** Content Preview
+
+Show first ~80 characters of moved content for quick recognition
+
+** Interaction Model
+
+Minimum viable interaction:
+
+1. User views detected moves in magit-status
+2. User manually stages related file pairs
+3. User commits each move with appropriate message
+
+Future enhancements:
+- Keybinding to stage both files in detected move
+- Keybinding to commit move with auto-generated message
+- Interactive selection of which moves to stage
+
+* Org-Mode Specific Requirements
+
+** Heading Level Normalization
+
+Remove heading asterisks before comparison:
+
+#+BEGIN_SRC elisp
+;; Before normalization:
+"**** Project requirements"
+"** Project requirements"
+
+;; After normalization:
+"Project requirements"
+"Project requirements"
+
+;; Similarity: 100%
+#+END_SRC
+
+** Whitespace Normalization
+
+- Multiple spaces/tabs → single space
+- Multiple newlines → single newline
+- Trim leading/trailing whitespace
+
+** Org-Roam Link Handling
+
+Current: No special handling (links compared as plain text)
+
+Future enhancement: Normalize link syntax for better matching
+
+** Property Drawer Handling
+
+Current: Properties included in comparison
+
+Future enhancement: Option to exclude =:PROPERTIES:= drawers
+
+* File Scope Requirements
+
+** Target Files
+
+Only analyze files that are:
+
+- Org-mode files (=*.org=)
+- Modified (visible in magit-status)
+- Part of org-roam repository (user's workflow context)
+
+** File Pairs to Compare
+
+Compare every modified .org file against every other modified .org file:
+
+- If 5 modified files: 5×4 = 20 comparisons
+- If 10 modified files: 10×9 = 90 comparisons
+- If 20 modified files: 20×19 = 380 comparisons
+
+**Performance consideration**: May need optimization for >20 files
+
+** Excluded Files
+
+Do not analyze:
+
+- Unmodified files
+- Untracked files
+- Staged files (future enhancement: detect in staged too)
+- Non-.org files
+
+* State Management Requirements
+
+** Detection Refresh
+
+Run move detection:
+
+- Every time magit-status refreshes
+- After staging/unstaging changes (sections should update)
+- After commits (remove committed moves from display)
+
+** Cache Invalidation
+
+Current: No caching (recalculate on every refresh)
+
+Future enhancement:
+- Cache results until file content changes
+- Invalidate cache when files modified
+- Store in buffer-local variable
+
+** Partial Staging Handling
+
+When user stages part of a detected move:
+
+- Don't update display until commit occurs
+- After commit: remove move from display if both files committed
+- Keep move visible if only one file committed
+
+* Performance Requirements
+
+** Acceptable Response Time
+
+Detection should complete in:
+
+- <1 second for <10 modified files
+- <5 seconds for <50 modified files
+- Display progress indicator if >5 seconds
+
+** Scalability Targets
+
+Minimum: Handle typical org-roam workflow (5-10 files)
+
+Desired: Handle large refactoring sessions (20-50 files)
+
+Stretch: Handle massive repositories (100+ files)
+
+** Optimization Strategies (Future)
+
+- Early termination for very dissimilar hunks
+- Limit comparisons to files modified in same session
+- Parallel similarity calculations
+- Similarity calculation caching
+
+* Configuration Requirements (Future)
+
+** User-Configurable Settings
+
+Allow customization of:
+
+#+BEGIN_SRC elisp
+(defcustom magit-move-similarity-threshold 85
+  "Minimum similarity percentage for move detection."
+  :type 'integer
+  :group 'magit-move-detection)
+
+(defcustom magit-move-minimum-size 10
+  "Minimum character count for hunks."
+  :type 'integer
+  :group 'magit-move-detection)
+
+(defcustom magit-move-auto-refresh t
+  "Automatically detect moves on magit-status refresh."
+  :type 'boolean
+  :group 'magit-move-detection)
+#+END_SRC
+
+* Success Criteria
+
+** Core Functionality Tests
+
+1. **Test: Simple Move**
+   - Delete content from file1.org
+   - Add identical content to file2.org
+   - Expected: 100% similarity match
+
+2. **Test: Heading Level Change**
+   - Delete =**** Heading= from file1.org
+   - Add =** Heading= to file2.org
+   - Expected: ~98% similarity match
+
+3. **Test: Multi-Line Move**
+   - Delete heading + 2 paragraphs from file1.org
+   - Add same to file2.org
+   - Expected: Single hunk, 100% similarity
+
+4. **Test: Minor Edit During Move**
+   - Delete "We need authentication" from file1.org
+   - Add "We need OAuth2 authentication" to file2.org
+   - Expected: ~85% similarity match
+
+5. **Test: False Positive Avoidance**
+   - Delete "authentication" from file1.org
+   - Add "authentication" to file2.org (different context)
+   - Expected: May match but low priority due to size
+
+** Integration Tests
+
+1. **Test: Multiple Moves**
+   - 3 different moves between 4 files
+   - Expected: All 3 detected and displayed separately
+
+2. **Test: Size Prioritization**
+   - One 100-char move, one 10-char move
+   - Expected: 100-char move listed first
+
+3. **Test: Magit Integration**
+   - Detected moves appear in magit-status
+   - Sections collapsible/expandable
+   - Display refreshes appropriately
+
+* Related Documentation
+
+- [[file:magit-orgmode-move-detection-project.org][Project Overview]]
+- [[file:magit-move-detection-similarity-algorithms.org][Similarity Algorithm Comparison]]
+- [[file:orgmode-content-similarity-detection.org][Content Similarity Detection]]
+- [[file:magit-move-detection-prototype-evolution.org][Prototype Development Log]]

@@ -1,0 +1,721 @@
+#+TITLE: MCP Server Integration for NLP Pipelines
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: mcp nlp spacy sbert python integration
+
+* Overview
+
+Guide to creating an MCP (Model Context Protocol) server that exposes NLP pipelines for text analysis, specifically designed for analyzing student argumentative essays and comparative discourse analysis.
+
+* What is MCP Integration?
+
+** Model Context Protocol
+
+MCP is a protocol for exposing AI/ML models and tools as standardized services that can be consumed by various clients. An MCP server:
+
+- Wraps heavy ML models and processing pipelines
+- Exposes clean interfaces as "tools"
+- Maintains state between analyses
+- Handles model loading and resource management
+- Provides consistent API across different analysis tasks
+
+** Benefits for NLP Workflows
+
+- **Reusability**: Load models once, use across multiple sessions
+- **State Management**: Maintain analysis history and iterations
+- **Clean Interfaces**: Abstract complex NLP pipelines into simple tool calls
+- **Composability**: Combine different NLP tools easily
+- **Performance**: Avoid reloading models for each analysis
+
+* Core NLP Tools to Expose
+
+** Document Analysis
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def analyze_document(filepath: str, iteration: int = 1) -> dict:
+    """
+    Process individual paper through spaCy pipeline.
+
+    Args:
+        filepath: Path to markdown document
+        iteration: Analysis iteration number for tracking
+
+    Returns:
+        {
+            "document_id": str,
+            "tokens": int,
+            "sentences": int,
+            "entities": List[dict],
+            "arguments": List[dict],
+            "topics": List[str],
+            "sentiment": dict,
+            "embedding": List[float]
+        }
+    """
+    content = read_markdown(filepath)
+    doc = nlp(content)
+
+    # Extract features
+    entities = [{"text": ent.text, "label": ent.label_}
+                for ent in doc.ents]
+    arguments = extract_arguments_hybrid(doc)
+    topics = extract_topics(doc)
+    sentiment = analyze_overall_sentiment(doc)
+    embedding = sbert_model.encode(content).tolist()
+
+    result = {
+        "document_id": generate_doc_id(filepath),
+        "filepath": filepath,
+        "iteration": iteration,
+        "tokens": len(doc),
+        "sentences": len(list(doc.sents)),
+        "entities": entities,
+        "arguments": arguments,
+        "topics": topics,
+        "sentiment": sentiment,
+        "embedding": embedding,
+        "timestamp": datetime.now().isoformat()
+    }
+
+    # Store in server state
+    document_cache[filepath] = result
+
+    return result
+#+END_SRC
+
+** Document Comparison
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def compare_documents(filepath1: str, filepath2: str,
+                           level: str = "document") -> dict:
+    """
+    Use SBERT to find semantic similarities between papers.
+
+    Args:
+        filepath1: Path to first document
+        filepath2: Path to second document
+        level: Granularity level ("document", "paragraph", "sentence")
+
+    Returns:
+        {
+            "similarity": float,
+            "level": str,
+            "matching_segments": List[dict],
+            "diverging_segments": List[dict]
+        }
+    """
+    doc1 = get_or_analyze(filepath1)
+    doc2 = get_or_analyze(filepath2)
+
+    if level == "document":
+        similarity = cosine_similarity(
+            [doc1["embedding"]],
+            [doc2["embedding"]]
+        )[0][0]
+
+        return {
+            "similarity": float(similarity),
+            "level": "document",
+            "doc1_id": doc1["document_id"],
+            "doc2_id": doc2["document_id"]
+        }
+
+    elif level == "paragraph":
+        return compare_at_paragraph_level(filepath1, filepath2)
+
+    elif level == "sentence":
+        return compare_at_sentence_level(filepath1, filepath2)
+#+END_SRC
+
+** Argument Extraction
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def extract_arguments(filepath: str, method: str = "hybrid") -> dict:
+    """
+    Identify claims, evidence, and stances from document.
+
+    Args:
+        filepath: Path to document
+        method: "rule-based", "ml", or "hybrid"
+
+    Returns:
+        {
+            "claims": List[dict],
+            "evidence": List[dict],
+            "counterarguments": List[dict],
+            "overall_stance": dict
+        }
+    """
+    content = read_markdown(filepath)
+    doc = nlp(content)
+
+    if method == "hybrid":
+        arguments = extract_arguments_hybrid(doc)
+    elif method == "rule-based":
+        arguments = extract_arguments_rules(doc)
+    else:
+        arguments = extract_arguments_ml(doc)
+
+    # Classify argument components
+    claims = [arg for arg in arguments if arg['type'] == 'claim']
+    evidence = [arg for arg in arguments if arg['type'] == 'evidence']
+    counterarguments = [arg for arg in arguments
+                       if arg['type'] == 'counterargument']
+
+    # Determine overall stance
+    overall_stance = determine_document_stance(arguments)
+
+    return {
+        "document_id": generate_doc_id(filepath),
+        "claims": claims,
+        "evidence": evidence,
+        "counterarguments": counterarguments,
+        "overall_stance": overall_stance,
+        "method_used": method
+    }
+#+END_SRC
+
+** Argument Clustering
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def cluster_arguments(filepaths: List[str],
+                           n_clusters: int = 5) -> dict:
+    """
+    Group similar positions across students.
+
+    Args:
+        filepaths: List of document paths to analyze
+        n_clusters: Number of clusters to create
+
+    Returns:
+        {
+            "clusters": List[dict],
+            "cluster_assignments": dict,
+            "cluster_summaries": List[str]
+        }
+    """
+    # Extract arguments from all documents
+    all_arguments = []
+    doc_to_args = {}
+
+    for filepath in filepaths:
+        args = await extract_arguments(filepath)
+        all_arguments.extend(args['claims'])
+        doc_to_args[filepath] = args
+
+    # Encode arguments
+    arg_texts = [arg['text'] for arg in all_arguments]
+    embeddings = sbert_model.encode(arg_texts)
+
+    # Cluster
+    from sklearn.cluster import AgglomerativeClustering
+    clustering = AgglomerativeClustering(n_clusters=n_clusters)
+    labels = clustering.fit_predict(embeddings)
+
+    # Organize results
+    clusters = {}
+    for i, (arg, label) in enumerate(zip(all_arguments, labels)):
+        if label not in clusters:
+            clusters[label] = []
+        clusters[label].append(arg)
+
+    # Generate cluster summaries
+    summaries = [generate_cluster_summary(args)
+                for args in clusters.values()]
+
+    return {
+        "clusters": clusters,
+        "cluster_assignments": dict(zip(filepaths, labels)),
+        "cluster_summaries": summaries,
+        "n_clusters": n_clusters
+    }
+#+END_SRC
+
+** Disagreement Detection
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def find_disagreements(filepaths: List[str],
+                            topic: str = None) -> dict:
+    """
+    Identify contrasting viewpoints on topics.
+
+    Args:
+        filepaths: Documents to compare
+        topic: Specific topic to analyze (optional)
+
+    Returns:
+        {
+            "topic": str,
+            "favor": List[str],
+            "against": List[str],
+            "neutral": List[str],
+            "contrasting_pairs": List[dict],
+            "polarization_score": float
+        }
+    """
+    if topic is None:
+        # Extract most discussed topic
+        topic = find_most_discussed_topic(filepaths)
+
+    stances = {}
+    for filepath in filepaths:
+        stance = analyze_stance_toward_topic(filepath, topic)
+        stances[filepath] = stance
+
+    # Categorize by stance
+    favor = [fp for fp, s in stances.items() if s['stance'] == 'favor']
+    against = [fp for fp, s in stances.items() if s['stance'] == 'against']
+    neutral = [fp for fp, s in stances.items() if s['stance'] == 'neutral']
+
+    # Find contrasting pairs
+    contrasting_pairs = find_maximum_contrast_pairs(stances)
+
+    # Calculate polarization
+    polarization = len(favor) / max(len(favor) + len(against), 1)
+
+    return {
+        "topic": topic,
+        "favor": favor,
+        "against": against,
+        "neutral": neutral,
+        "contrasting_pairs": contrasting_pairs,
+        "polarization_score": polarization,
+        "total_documents": len(filepaths)
+    }
+#+END_SRC
+
+* MCP Server Implementation
+
+** Basic Server Structure
+
+#+BEGIN_SRC python
+from mcp import MCPServer
+import spacy
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+
+class NLPAnalysisServer:
+    def __init__(self):
+        # Load models once at startup
+        print("Loading NLP models...")
+        self.nlp = spacy.load("en_core_web_trf")
+        self.sbert = SentenceTransformer('all-MiniLM-L6-v2')
+        self.stance_classifier = pipeline(
+            "text-classification",
+            model="stance-detection-model"
+        )
+
+        # State management
+        self.document_cache = {}
+        self.analysis_history = []
+        self.vector_store = None
+
+        print("Models loaded successfully")
+
+    def initialize_vector_store(self):
+        """Set up ChromaDB for persistent storage."""
+        import chromadb
+        self.vector_store = chromadb.Client()
+        self.collection = self.vector_store.create_collection(
+            "student_arguments"
+        )
+
+# Create server instance
+nlp_server = NLPAnalysisServer()
+mcp = MCPServer("NLP Analysis Server")
+
+# Register tools
+@mcp.tool()
+async def analyze_document(filepath: str, iteration: int = 1):
+    return await nlp_server.analyze_document(filepath, iteration)
+
+@mcp.tool()
+async def compare_documents(filepath1: str, filepath2: str, level: str = "document"):
+    return await nlp_server.compare_documents(filepath1, filepath2, level)
+
+# ... register other tools ...
+
+if __name__ == "__main__":
+    mcp.run()
+#+END_SRC
+
+** State Management
+
+#+BEGIN_SRC python
+class AnalysisState:
+    """Maintain state across analysis iterations."""
+
+    def __init__(self):
+        self.iterations = {}  # iteration_num -> results
+        self.document_versions = {}  # doc_id -> [version_history]
+        self.concept_evolution = {}  # concept -> [iteration_data]
+
+    def store_iteration(self, iteration_num, results):
+        """Store complete iteration results."""
+        self.iterations[iteration_num] = {
+            "results": results,
+            "timestamp": datetime.now(),
+            "documents_analyzed": len(results['documents']),
+            "concepts_found": len(results['concepts'])
+        }
+
+    def get_iteration(self, iteration_num):
+        """Retrieve specific iteration results."""
+        return self.iterations.get(iteration_num)
+
+    def compare_iterations(self, iter1, iter2):
+        """Compare results between iterations."""
+        r1 = self.iterations[iter1]
+        r2 = self.iterations[iter2]
+
+        return {
+            "iteration_1": iter1,
+            "iteration_2": iter2,
+            "documents_added": r2['documents_analyzed'] - r1['documents_analyzed'],
+            "concepts_added": r2['concepts_found'] - r1['concepts_found'],
+            "concept_drift": calculate_concept_drift(r1, r2)
+        }
+
+    def track_concept_evolution(self, concept, iteration, data):
+        """Track how concepts change across iterations."""
+        if concept not in self.concept_evolution:
+            self.concept_evolution[concept] = []
+
+        self.concept_evolution[concept].append({
+            "iteration": iteration,
+            "frequency": data['frequency'],
+            "sentiment": data['sentiment'],
+            "embedding": data['embedding'],
+            "timestamp": datetime.now()
+        })
+#+END_SRC
+
+** Tool for Iteration Comparison
+
+#+BEGIN_SRC python
+@mcp_server.tool()
+async def compare_analysis_iterations(iteration1: int, iteration2: int) -> dict:
+    """
+    Compare findings between different analysis iterations.
+
+    Args:
+        iteration1: First iteration number
+        iteration2: Second iteration number
+
+    Returns:
+        {
+            "concepts_added": List[str],
+            "concepts_removed": List[str],
+            "concepts_changed": List[dict],
+            "similarity_drift": float
+        }
+    """
+    r1 = analysis_state.get_iteration(iteration1)
+    r2 = analysis_state.get_iteration(iteration2)
+
+    if not r1 or not r2:
+        raise ValueError(f"Iteration {iteration1} or {iteration2} not found")
+
+    # Find concept differences
+    concepts1 = set(r1['results']['concepts'].keys())
+    concepts2 = set(r2['results']['concepts'].keys())
+
+    added = list(concepts2 - concepts1)
+    removed = list(concepts1 - concepts2)
+
+    # Track concept drift for shared concepts
+    shared = concepts1 & concepts2
+    changed = []
+
+    for concept in shared:
+        emb1 = r1['results']['concepts'][concept]['embedding']
+        emb2 = r2['results']['concepts'][concept]['embedding']
+
+        similarity = cosine_similarity([emb1], [emb2])[0][0]
+
+        if similarity < 0.9:  # Significant drift
+            changed.append({
+                "concept": concept,
+                "similarity": float(similarity),
+                "drift": 1 - similarity
+            })
+
+    return {
+        "iteration1": iteration1,
+        "iteration2": iteration2,
+        "concepts_added": added,
+        "concepts_removed": removed,
+        "concepts_changed": sorted(changed, key=lambda x: x['drift'], reverse=True),
+        "time_between": (r2['timestamp'] - r1['timestamp']).total_seconds()
+    }
+#+END_SRC
+
+* Integration with Existing Tools
+
+** spaCy Pipeline Integration
+
+#+BEGIN_SRC python
+class SpaCyMCPWrapper:
+    """Wrap spaCy pipeline for MCP server."""
+
+    def __init__(self, model_name="en_core_web_trf"):
+        self.nlp = spacy.load(model_name)
+
+        # Add custom components
+        @Language.component("argument_detector")
+        def argument_detector(doc):
+            # Custom argument detection logic
+            doc._.arguments = extract_arguments_hybrid(doc)
+            return doc
+
+        if not Doc.has_extension("arguments"):
+            Doc.set_extension("arguments", default=[])
+
+        self.nlp.add_pipe("argument_detector", last=True)
+
+    def process(self, text, doc_id=None):
+        """Process text and return structured results."""
+        doc = self.nlp(text)
+
+        if doc_id:
+            doc.user_data["doc_id"] = doc_id
+
+        return {
+            "doc_id": doc_id,
+            "tokens": [token.text for token in doc],
+            "pos_tags": [token.pos_ for token in doc],
+            "entities": [{"text": ent.text, "label": ent.label_}
+                        for ent in doc.ents],
+            "arguments": doc._.arguments,
+            "sentences": [sent.text for sent in doc.sents]
+        }
+#+END_SRC
+
+** SBERT Integration
+
+#+BEGIN_SRC python
+class SBERTMCPWrapper:
+    """Wrap Sentence-BERT for MCP server."""
+
+    def __init__(self, model_name='all-MiniLM-L6-v2'):
+        self.model = SentenceTransformer(model_name)
+        self.cache = {}
+
+    def encode(self, texts, cache_key=None):
+        """Encode texts with optional caching."""
+        if cache_key and cache_key in self.cache:
+            return self.cache[cache_key]
+
+        embeddings = self.model.encode(texts)
+
+        if cache_key:
+            self.cache[cache_key] = embeddings
+
+        return embeddings
+
+    def find_similar(self, query_embedding, corpus_embeddings, top_k=5):
+        """Find most similar embeddings."""
+        similarities = cosine_similarity([query_embedding], corpus_embeddings)[0]
+        top_indices = np.argsort(similarities)[-top_k:][::-1]
+
+        return [
+            {"index": int(idx), "similarity": float(similarities[idx])}
+            for idx in top_indices
+        ]
+#+END_SRC
+
+** ChromaDB Integration
+
+#+BEGIN_SRC python
+class VectorStoreMCPWrapper:
+    """Wrap ChromaDB for persistent vector storage."""
+
+    def __init__(self):
+        import chromadb
+        self.client = chromadb.Client()
+        self.collections = {}
+
+    def create_collection(self, name):
+        """Create new collection for a specific analysis."""
+        if name not in self.collections:
+            self.collections[name] = self.client.create_collection(name)
+        return self.collections[name]
+
+    def store_document(self, collection_name, doc_id, text, embedding, metadata):
+        """Store document in vector store."""
+        collection = self.collections.get(collection_name)
+        if not collection:
+            collection = self.create_collection(collection_name)
+
+        collection.add(
+            documents=[text],
+            embeddings=[embedding.tolist()],
+            metadatas=[metadata],
+            ids=[doc_id]
+        )
+
+    def query_similar(self, collection_name, query_embedding, n_results=5):
+        """Find similar documents in collection."""
+        collection = self.collections.get(collection_name)
+        if not collection:
+            return []
+
+        results = collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=n_results
+        )
+
+        return results
+#+END_SRC
+
+* Example MCP Server Usage
+
+** Client-Side Tool Invocation
+
+#+BEGIN_SRC python
+# Assuming MCP client is set up
+import mcp_client
+
+# Connect to NLP server
+nlp = mcp_client.connect("nlp-analysis-server")
+
+# Analyze single document
+result = nlp.analyze_document(
+    filepath="papers/student_01.md",
+    iteration=1
+)
+
+print(f"Found {len(result['arguments'])} arguments")
+print(f"Overall sentiment: {result['sentiment']}")
+
+# Compare two documents
+similarity = nlp.compare_documents(
+    filepath1="papers/student_01.md",
+    filepath2="papers/student_02.md",
+    level="paragraph"
+)
+
+print(f"Similarity: {similarity['similarity']:.2%}")
+
+# Find all disagreements on a topic
+disagreements = nlp.find_disagreements(
+    filepaths=["papers/student_{:02d}.md".format(i) for i in range(1, 21)],
+    topic="climate change"
+)
+
+print(f"Students in favor: {len(disagreements['favor'])}")
+print(f"Students against: {len(disagreements['against'])}")
+print(f"Polarization: {disagreements['polarization_score']:.2%}")
+#+END_SRC
+
+** Iterative Analysis Workflow
+
+#+BEGIN_SRC python
+# Iteration 1: Initial exploration
+iteration_1 = nlp.analyze_corpus(
+    filepaths=all_papers,
+    iteration=1
+)
+
+# Iteration 2: Refined analysis after discovering key concepts
+iteration_2 = nlp.analyze_corpus(
+    filepaths=all_papers,
+    iteration=2,
+    concepts=iteration_1['discovered_concepts']
+)
+
+# Compare iterations
+comparison = nlp.compare_analysis_iterations(
+    iteration1=1,
+    iteration2=2
+)
+
+print(f"New concepts found: {comparison['concepts_added']}")
+print(f"Concept drift detected: {len(comparison['concepts_changed'])}")
+#+END_SRC
+
+* Performance Considerations
+
+** Model Loading Strategy
+
+#+BEGIN_SRC python
+class LazyModelLoader:
+    """Load models only when first needed."""
+
+    def __init__(self):
+        self._nlp = None
+        self._sbert = None
+        self._stance_classifier = None
+
+    @property
+    def nlp(self):
+        if self._nlp is None:
+            print("Loading spaCy model...")
+            self._nlp = spacy.load("en_core_web_trf")
+        return self._nlp
+
+    @property
+    def sbert(self):
+        if self._sbert is None:
+            print("Loading SBERT model...")
+            self._sbert = SentenceTransformer('all-MiniLM-L6-v2')
+        return self._sbert
+
+    @property
+    def stance_classifier(self):
+        if self._stance_classifier is None:
+            print("Loading stance classifier...")
+            self._stance_classifier = pipeline("text-classification")
+        return self._stance_classifier
+#+END_SRC
+
+** Caching Strategy
+
+#+BEGIN_SRC python
+from functools import lru_cache
+import hashlib
+
+def cache_document_analysis(func):
+    """Cache document analysis results."""
+    cache = {}
+
+    async def wrapper(filepath, *args, **kwargs):
+        # Create cache key from file content hash
+        with open(filepath) as f:
+            content = f.read()
+            file_hash = hashlib.md5(content.encode()).hexdigest()
+
+        cache_key = f"{file_hash}_{kwargs.get('iteration', 1)}"
+
+        if cache_key in cache:
+            return cache[cache_key]
+
+        result = await func(filepath, *args, **kwargs)
+        cache[cache_key] = result
+        return result
+
+    return wrapper
+#+END_SRC
+
+* Related Topics
+
+- [[file:nlp-tools-comparison.org][NLP Tools and Libraries Comparison]]
+- [[file:nlp-student-argument-analysis.org][Student Argument Analysis Workflow]]
+- [[file:nlp-document-provenance-tracking.org][Document Provenance and Iteration Tracking]]
+- [[file:nlp-vector-store-integration.org][Vector Store Integration for Document Comparison]]
+- [[file:nlp-hierarchical-embeddings.org][Hierarchical Document Embeddings]]
+
+* TODO Implementation Tasks
+
+- TODO Create complete MCP server implementation
+- TODO Add batch processing support
+- TODO Implement progress tracking for long operations
+- TODO Add export functionality for analysis results
+- TODO Create client library for easier usage
+- TODO Add logging and monitoring
+- TODO Write integration tests

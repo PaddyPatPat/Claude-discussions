@@ -1,0 +1,474 @@
+#+TITLE: Magit Move Detection - Technical Architecture
+#+AUTHOR: Claude
+#+DATE: [2025-11-08]
+#+TAGS: emacs magit architecture implementation
+
+* Overview
+
+This document describes the technical architecture and implementation approach for the Magit Org-Mode Move Detection extension.
+
+* System Architecture
+
+** High-Level Data Flow
+
+#+BEGIN_SRC text
+┌─────────────────┐
+│  Magit Status   │
+│     Buffer      │
+└────────┬────────┘
+         │
+         │ Parse buffer text
+         ▼
+┌─────────────────┐
+│  Extract Hunks  │
+│  - Deleted      │
+│  - Added        │
+└────────┬────────┘
+         │
+         │ Group contiguous lines
+         ▼
+┌─────────────────┐
+│  Normalize      │
+│  Content        │
+│  - Remove **    │
+│  - Whitespace   │
+└────────┬────────┘
+         │
+         │ Cross-file comparison
+         ▼
+┌─────────────────┐
+│  Calculate      │
+│  Similarity     │
+│  (Levenshtein)  │
+└────────┬────────┘
+         │
+         │ Filter >85%
+         ▼
+┌─────────────────┐
+│  Display        │
+│  Detected Moves │
+│  (sorted by     │
+│   size)         │
+└─────────────────┘
+#+END_SRC
+
+** Core Components
+
+*** 1. Buffer Parser
+
+**Function**: Extract diff hunks from magit-status buffer
+
+**Input**: Current magit-status buffer
+**Output**: List of deleted hunks, list of added hunks
+
+**Algorithm**:
+1. Scan buffer line-by-line
+2. Track current file context (via "modified filename.org" markers)
+3. Identify diff lines (starting with =-= or =+=)
+4. Group contiguous same-prefix lines
+5. Associate each hunk with its file
+
+*** 2. Hunk Grouper
+
+**Function**: Combine contiguous diff lines into logical units
+
+**Input**: Stream of diff lines with prefixes
+**Output**: Multi-line hunks with metadata
+
+**Algorithm**:
+1. Start group on first =-= or =+= line
+2. Add subsequent lines with same prefix to group
+3. End group when prefix changes or context line encountered
+4. Filter empty lines from group
+5. Create hunk object with file, content, size
+
+*** 3. Content Normalizer
+
+**Function**: Prepare content for comparison
+
+**Input**: Raw hunk content
+**Output**: Normalized string
+
+**Normalization Steps**:
+1. Remove org-mode heading markers (=^\\*+ =)
+2. Collapse multiple whitespace to single space
+3. Reduce multiple newlines to single newline
+4. Trim leading/trailing whitespace
+
+*** 4. Similarity Calculator
+
+**Function**: Compute similarity between two text blocks
+
+**Input**: Two normalized strings
+**Output**: Similarity percentage (0-100)
+
+**Algorithm**: Levenshtein distance
+
+$$
+similarity = (1 - \frac{distance}{max(len_1, len_2)}) \times 100
+$$
+
+*** 5. Move Detector
+
+**Function**: Find high-similarity cross-file hunk pairs
+
+**Input**: Deleted hunks, added hunks
+**Output**: List of detected moves
+
+**Algorithm**:
+1. For each deleted hunk D from file X:
+   2. For each added hunk A from file Y:
+      3. If X ≠ Y (different files):
+         4. Calculate similarity(D, A)
+         5. If similarity > 85%:
+            6. Add to moves list
+7. Sort moves by size (descending)
+
+*** 6. Display Formatter
+
+**Function**: Present detected moves in magit-status
+
+**Input**: List of detected moves
+**Output**: Formatted magit section
+
+**Current**: Debug buffer output
+**Future**: Custom magit-section
+
+* Implementation Details
+
+** Buffer Parsing Strategy
+
+*** Direct Text Parsing (Chosen Approach)
+
+Parse magit-status buffer as plain text:
+
+#+BEGIN_SRC elisp
+(save-excursion
+  (goto-char (point-min))
+  (while (not (eobp))
+    (let ((line (buffer-substring-no-properties
+                (line-beginning-position)
+                (line-end-position))))
+      ;; Process line
+      (forward-line 1))))
+#+END_SRC
+
+**Advantages**:
+- Simple and reliable
+- Independent of Magit API changes
+- Direct access to visible content
+- Easy to debug
+
+**Disadvantages**:
+- Relies on magit output format
+- May break if magit changes format
+
+*** Magit Section API (Rejected Approach)
+
+Use magit's internal section structures:
+
+#+BEGIN_SRC elisp
+(magit-section-map
+  (lambda (section)
+    (when (eq (oref section type) 'hunk)
+      ;; Access hunk data
+      )))
+#+END_SRC
+
+**Why Rejected**:
+- Section traversal unreliable
+- API inconsistent across versions
+- Harder to debug
+- Hunk content format unclear
+
+** File Context Tracking
+
+Track which file each diff line belongs to:
+
+#+BEGIN_SRC elisp
+(let ((current-file nil))
+  (when (string-match "^modified[ \t]+\\(.+\\.org\\)" line)
+    (setq current-file (match-string 1 line)))
+
+  (when (and current-file (string-match "^[-+]" line))
+    ;; Associate diff line with current-file
+    ))
+#+END_SRC
+
+**Key Insight**: File context persists until next "modified filename" marker
+
+** Hunk Grouping Algorithm
+
+State machine for grouping contiguous lines:
+
+#+BEGIN_SRC elisp
+(let ((current-group '())
+      (current-prefix nil))
+
+  (cond
+   ;; New deletion group
+   ((and (string-prefix-p "-" line)
+         (not (string= current-prefix "-")))
+    (when current-group
+      (finalize-and-store-hunk current-group))
+    (setq current-group (list line)
+          current-prefix "-"))
+
+   ;; Continue deletion group
+   ((string-prefix-p "-" line)
+    (push line current-group))
+
+   ;; New addition group
+   ((and (string-prefix-p "+" line)
+         (not (string= current-prefix "+")))
+    (when current-group
+      (finalize-and-store-hunk current-group))
+    (setq current-group (list line)
+          current-prefix "+"))
+
+   ;; Continue addition group
+   ((string-prefix-p "+" line)
+    (push line current-group))
+
+   ;; Context line - end current group
+   (t
+    (when current-group
+      (finalize-and-store-hunk current-group))
+    (setq current-group nil
+          current-prefix nil))))
+#+END_SRC
+
+** Levenshtein Distance Implementation
+
+Dynamic programming approach:
+
+#+BEGIN_SRC elisp
+(defun levenshtein-distance (str1 str2)
+  "Calculate Levenshtein distance between STR1 and STR2."
+  (let* ((len1 (length str1))
+         (len2 (length str2))
+         (matrix (make-vector (1+ len1) nil)))
+
+    ;; Initialize matrix
+    (dotimes (i (1+ len1))
+      (aset matrix i (make-vector (1+ len2) 0))
+      (aset (aref matrix i) 0 i))
+    (dotimes (j (1+ len2))
+      (aset (aref matrix 0) j j))
+
+    ;; Fill matrix
+    (dotimes (i len1)
+      (dotimes (j len2)
+        (let* ((cost (if (= (aref str1 i) (aref str2 j)) 0 1))
+               (deletion (1+ (aref (aref matrix i) (1+ j))))
+               (insertion (1+ (aref (aref matrix (1+ i)) j)))
+               (substitution (+ (aref (aref matrix i) j) cost)))
+          (aset (aref matrix (1+ i)) (1+ j)
+                (min deletion insertion substitution)))))
+
+    ;; Return distance
+    (aref (aref matrix len1) len2)))
+#+END_SRC
+
+**Complexity**: O(n × m) where n, m are string lengths
+
+**Optimization Potential**: Early termination if distance exceeds threshold
+
+* Data Structures
+
+** Hunk Object
+
+Property list representing a detected hunk:
+
+#+BEGIN_SRC elisp
+(list :file "file1.org"
+      :content "** Heading\nContent text"
+      :type 'deleted        ; or 'added
+      :size 28              ; character count
+      :lines 2)             ; line count
+#+END_SRC
+
+** Move Object
+
+Property list representing a detected move:
+
+#+BEGIN_SRC elisp
+(list :from-file "file1.org"
+      :to-file "file2.org"
+      :content "Heading\nContent text"  ; normalized
+      :similarity 95.5                   ; percentage
+      :size 28)                          ; original size
+#+END_SRC
+
+** Buffer-Local State
+
+Store detection results:
+
+#+BEGIN_SRC elisp
+(defvar-local magit-detected-moves nil
+  "List of detected content moves in current magit-status buffer.")
+#+END_SRC
+
+* Integration Points
+
+** Magit Status Refresh Hook
+
+Run detection automatically:
+
+#+BEGIN_SRC elisp
+(add-hook 'magit-status-refresh-hook #'magit-detect-org-moves)
+#+END_SRC
+
+**Considerations**:
+- Hook runs after magit updates buffer
+- Should be fast enough not to block UI
+- May need throttling for large repos
+
+** Custom Magit Section
+
+Insert detected moves section:
+
+#+BEGIN_SRC elisp
+(magit-add-section-hook 'magit-status-sections-hook
+                        'magit-insert-org-moves-section
+                        'magit-insert-untracked-files
+                        t)
+
+(defun magit-insert-org-moves-section ()
+  "Insert section showing detected org-roam content moves."
+  (when-let ((moves magit-detected-moves))
+    (magit-insert-section (org-moves)
+      (magit-insert-heading "Content Moves")
+      (dolist (move moves)
+        (magit-insert-section (org-move move)
+          (insert (format "  %s → %s (%.0f%%)\n"
+                         (plist-get move :from-file)
+                         (plist-get move :to-file)
+                         (plist-get move :similarity)))))
+      (insert "\n"))))
+#+END_SRC
+
+** Staging Commands (Future)
+
+Add keybindings for move-aware staging:
+
+#+BEGIN_SRC elisp
+(define-key magit-status-mode-map (kbd "M-s") #'magit-stage-move-pair)
+
+(defun magit-stage-move-pair ()
+  "Stage both files involved in move at point."
+  (interactive)
+  (when-let* ((section (magit-current-section))
+              (move (oref section value)))
+    (magit-stage-file (plist-get move :from-file))
+    (magit-stage-file (plist-get move :to-file))))
+#+END_SRC
+
+* Performance Considerations
+
+** Complexity Analysis
+
+Given:
+- N = number of modified .org files
+- D = average deleted hunks per file
+- A = average added hunks per file
+- L = average hunk length
+
+**Parsing**: O(N × lines-per-file) = O(N)
+
+**Hunk Extraction**: O(N × hunks-per-file) = O(N)
+
+**Similarity Calculation**: O(N² × D × A × L²)
+- For each file pair: N²
+- For each hunk pair: D × A
+- Levenshtein distance: L²
+
+**Dominant Factor**: Similarity calculation (N² × hunks × L²)
+
+** Expected Performance
+
+Typical case (10 files, 5 hunks each, 50 chars/hunk):
+- Comparisons: 10² × 5 × 5 = 2,500
+- Levenshtein per comparison: 50² = 2,500 operations
+- Total: ~6.25M operations
+
+On modern hardware: <100ms
+
+Worst case (50 files, 20 hunks each, 200 chars/hunk):
+- Comparisons: 50² × 20 × 20 = 1,000,000
+- Levenshtein per comparison: 200² = 40,000 operations
+- Total: ~40B operations
+
+May require optimization (caching, early termination, parallelization)
+
+** Optimization Strategies (Future)
+
+1. **Quick Similarity Check**: Compare lengths first
+   - If =|len1 - len2| > threshold × max(len1, len2)=: skip
+
+2. **Early Termination**: Abort Levenshtein if distance exceeds threshold mid-calculation
+
+3. **Caching**: Store normalized content and similarities
+
+4. **Limiting Scope**: Only compare files modified in same time window
+
+* Error Handling
+
+** Invalid Buffer State
+
+#+BEGIN_SRC elisp
+(unless (derived-mode-p 'magit-status-mode)
+  (user-error "Must be run in magit-status buffer"))
+#+END_SRC
+
+** Empty Results
+
+#+BEGIN_SRC elisp
+(if moves
+    (display-moves moves)
+  (message "No content moves detected"))
+#+END_SRC
+
+** Malformed Hunks
+
+#+BEGIN_SRC elisp
+(when (and hunk (not (string-empty-p (plist-get hunk :content))))
+  ;; Process valid hunk
+  )
+#+END_SRC
+
+* Testing Strategy
+
+** Unit Tests
+
+Test individual components:
+
+#+BEGIN_SRC elisp
+(ert-deftest test-levenshtein-distance ()
+  (should (= (levenshtein-distance "hello" "hello") 0))
+  (should (= (levenshtein-distance "hello" "hallo") 1))
+  (should (= (levenshtein-distance "** Test" "Test") 3)))
+#+END_SRC
+
+** Integration Tests
+
+Test with real magit buffers:
+
+1. Create test org files with known moves
+2. Run magit-status
+3. Run detection
+4. Verify expected moves detected
+
+** Regression Tests
+
+Maintain test cases for:
+- Version 2.4 fixes (empty line filtering)
+- Version 2.5 improvements
+- Edge cases discovered during development
+
+* Related Documentation
+
+- [[file:magit-orgmode-move-detection-project.org][Project Overview]]
+- [[file:magit-move-detection-requirements.org][Functional Requirements]]
+- [[file:magit-move-detection-similarity-algorithms.org][Similarity Algorithm Comparison]]
+- [[file:magit-move-detection-prototype-evolution.org][Prototype Development Log]]
