@@ -1,0 +1,654 @@
+#+TITLE: Network Transfer Methods for Immich
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich network-transfer scp sftp rsync smb nfs file-transfer
+
+* Overview
+
+When Immich CLI is not available or suitable, there are several network-based methods to transfer photos directly to your Immich server's storage location. This document covers various file transfer protocols and when to use each.
+
+* Transfer Method Comparison
+
+| Method | Speed | Security | Ease of Setup | Resume | Best For |
+|--------+-------+----------+---------------+--------+----------|
+| rsync | Fast | SSH-based | Medium | Yes | Large transfers |
+| SCP | Fast | SSH-based | Easy | No | One-time transfers |
+| SFTP | Fast | SSH-based | Easy | GUI | Interactive transfers |
+| SMB/CIFS | Medium | Varies | Medium | Depends | Windows/Mac integration |
+| NFS | Fast | Network | Hard | Depends | Linux-to-Linux |
+| FTP/FTPS | Medium | FTPS only | Easy | Yes | Legacy systems |
+
+* SSH-Based Methods
+
+** Prerequisites
+
+All SSH-based methods require:
+- SSH access to Immich server
+- SSH credentials (password or key)
+- SSH server running on Immich host
+
+** SCP (Secure Copy)
+
+*** Description
+
+Secure Copy Protocol - simple file copying over SSH.
+
+*** Advantages
+- Simple syntax
+- Reliable
+- No additional software needed
+- Works on all platforms with SSH
+
+*** Limitations
+- No resume capability
+- Copies all files even if unchanged
+- Less efficient than rsync for incremental transfers
+
+*** Basic Usage
+
+#+BEGIN_SRC bash
+scp -r /path/to/photos/ username@immich-server:/path/to/upload/location/
+#+END_SRC
+
+*** With Options
+
+#+BEGIN_SRC bash
+# Preserve timestamps and permissions
+scp -rp /path/to/photos/ username@server:/upload/path/
+
+# Show progress
+scp -rp /path/to/photos/ username@server:/upload/path/
+
+# Limit bandwidth (in Kbps)
+scp -rp -l 10000 /path/to/photos/ username@server:/upload/path/
+
+# Use specific port
+scp -rp -P 2222 /path/to/photos/ username@server:/upload/path/
+#+END_SRC
+
+*** Example Workflow
+
+#+BEGIN_SRC bash
+# Step 1: Copy files
+scp -rp ~/Photos username@10.205.16.244:/mnt/immich/upload/
+
+# Step 2: SSH to server and set permissions
+ssh username@10.205.16.244
+sudo chown -R immich:immich /mnt/immich/upload/Photos
+
+# Step 3: Trigger library scan via Immich web interface
+#+END_SRC
+
+** rsync over SSH
+
+*** Description
+
+Rsync is the most efficient method for large transfers, especially when updating existing collections.
+
+*** Advantages
+- Only transfers changed files
+- Resume capability
+- Shows detailed progress
+- Compression option
+- Very efficient for updates
+
+*** Limitations
+- Requires rsync on both ends
+- More complex syntax
+- Not enabled by default on Immich
+
+*** Basic Usage
+
+#+BEGIN_SRC bash
+rsync -avz /path/to/photos/ username@server:/upload/path/
+#+END_SRC
+
+*** Options Explained
+
+| Flag | Meaning |
+|------+---------|
+| =-a= | Archive mode (preserves permissions, timestamps, etc.) |
+| =-v= | Verbose output |
+| =-z= | Compress during transfer |
+| =-h= | Human-readable sizes |
+| =-P= | Show progress and enable resume |
+| =--delete= | Delete files in destination not in source |
+
+*** Recommended Command
+
+#+BEGIN_SRC bash
+rsync -avzP /path/to/photos/ username@server:/upload/path/
+#+END_SRC
+
+*** Advanced Examples
+
+**** With Progress and Resume
+
+#+BEGIN_SRC bash
+rsync -avzP --stats /local/photos/ user@server:/remote/photos/
+#+END_SRC
+
+**** Exclude Certain Files
+
+#+BEGIN_SRC bash
+rsync -avzP \
+  --exclude='*.tmp' \
+  --exclude='Thumbs.db' \
+  --exclude='.DS_Store' \
+  /local/photos/ user@server:/remote/photos/
+#+END_SRC
+
+**** Limit Bandwidth
+
+#+BEGIN_SRC bash
+rsync -avzP --bwlimit=10000 /local/photos/ user@server:/remote/photos/
+#+END_SRC
+
+**** Dry Run (Test Without Copying)
+
+#+BEGIN_SRC bash
+rsync -avzP --dry-run /local/photos/ user@server:/remote/photos/
+#+END_SRC
+
+** SFTP (SSH File Transfer Protocol)
+
+*** Description
+
+Interactive file transfer over SSH with GUI client support.
+
+*** Advantages
+- GUI clients available (Cyberduck, FileZilla, etc.)
+- Interactive browsing
+- Easy drag-and-drop
+- Resume capability in most clients
+
+*** Command-Line SFTP
+
+#+BEGIN_SRC bash
+# Connect to server
+sftp username@10.205.16.244
+
+# Navigate to destination
+sftp> cd /mnt/immich/upload
+
+# Upload directory
+sftp> put -r Photos
+
+# Check progress
+sftp> ls
+
+# Disconnect
+sftp> exit
+#+END_SRC
+
+*** GUI Clients
+
+**** Cyberduck (Mac/Windows)
+
+1. Open Cyberduck
+2. Click "Open Connection"
+3. Select "SFTP (SSH File Transfer Protocol)"
+4. Enter:
+   - Server: 10.205.16.244
+   - Username: your-username
+   - Password: your-password
+5. Click "Connect"
+6. Navigate to upload location
+7. Drag and drop photos
+
+**** FileZilla (Cross-platform)
+
+1. Open FileZilla
+2. File → Site Manager → New Site
+3. Protocol: SFTP
+4. Host: 10.205.16.244
+5. Port: 22
+6. Logon Type: Normal
+7. Username: your-username
+8. Password: your-password
+9. Connect and drag-drop files
+
+* Network Share Methods
+
+** SMB/CIFS (Samba)
+
+### Description
+
+Windows-native file sharing protocol, also supported on Mac and Linux.
+
+*** Advantages
+- Mounts as network drive
+- Native OS integration
+- Good for ongoing access
+- Works well for Mac to Linux
+
+*** Setup on Immich Server
+
+#+BEGIN_SRC bash
+# Install Samba
+sudo apt update
+sudo apt install samba
+
+# Create share directory
+sudo mkdir -p /mnt/immich/upload
+
+# Configure Samba
+sudo nano /etc/samba/smb.conf
+#+END_SRC
+
+Add configuration:
+
+#+BEGIN_SRC
+[immich-upload]
+path = /mnt/immich/upload
+browseable = yes
+read only = no
+guest ok = no
+valid users = your-username
+#+END_SRC
+
+Set Samba password:
+
+#+BEGIN_SRC bash
+sudo smbpasswd -a your-username
+sudo systemctl restart smbd
+#+END_SRC
+
+*** Connecting from Mac
+
+**** Via Finder
+
+1. Open Finder
+2. Menu: Go → Connect to Server (⌘K)
+3. Server Address: =smb://10.205.16.244/immich-upload=
+4. Click "Connect"
+5. Enter username and password
+6. Share appears as mounted volume
+
+**** Via Command Line
+
+#+BEGIN_SRC bash
+# Create mount point
+mkdir ~/immich-mount
+
+# Mount share
+mount_smbfs //username@10.205.16.244/immich-upload ~/immich-mount
+
+# Copy files
+cp -r ~/Photos ~/immich-mount/
+
+# Unmount when done
+umount ~/immich-mount
+#+END_SRC
+
+*** Connecting from Linux
+
+#+BEGIN_SRC bash
+# Install CIFS utilities
+sudo apt install cifs-utils
+
+# Create mount point
+sudo mkdir -p /mnt/immich-share
+
+# Mount share
+sudo mount -t cifs //10.205.16.244/immich-upload /mnt/immich-share \
+  -o username=your-username,password=your-password
+
+# Copy files
+cp -r /local/photos /mnt/immich-share/
+
+# Unmount
+sudo umount /mnt/immich-share
+#+END_SRC
+
+*** Persistent Mount (Linux)
+
+Edit =/etc/fstab=:
+
+#+BEGIN_SRC
+//10.205.16.244/immich-upload /mnt/immich-share cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,_netdev 0 0
+#+END_SRC
+
+Create credentials file:
+
+#+BEGIN_SRC bash
+sudo nano /etc/smbcredentials
+#+END_SRC
+
+Add:
+
+#+BEGIN_SRC
+username=your-username
+password=your-password
+#+END_SRC
+
+Secure it:
+
+#+BEGIN_SRC bash
+sudo chmod 600 /etc/smbcredentials
+#+END_SRC
+
+** NFS (Network File System)
+
+*** Description
+
+Unix-native network file system, best for Linux-to-Linux transfers.
+
+*** Advantages
+- Very fast on local networks
+- Native Linux support
+- Good performance
+- Simpler permissions model
+
+*** Limitations
+- Primarily Linux/Unix
+- Less secure than SSH methods
+- Requires NFS server setup
+
+*** Setup NFS Server (on Immich host)
+
+#+BEGIN_SRC bash
+# Install NFS server
+sudo apt install nfs-kernel-server
+
+# Create export directory
+sudo mkdir -p /mnt/immich/upload
+
+# Configure export
+sudo nano /etc/exports
+#+END_SRC
+
+Add line:
+
+#+BEGIN_SRC
+/mnt/immich/upload 10.205.16.0/24(rw,sync,no_subtree_check)
+#+END_SRC
+
+Apply configuration:
+
+#+BEGIN_SRC bash
+sudo exportfs -ra
+sudo systemctl restart nfs-kernel-server
+#+END_SRC
+
+*** Mount NFS Share (on client)
+
+#+BEGIN_SRC bash
+# Install NFS client
+sudo apt install nfs-common
+
+# Create mount point
+sudo mkdir -p /mnt/immich-nfs
+
+# Mount share
+sudo mount -t nfs 10.205.16.244:/mnt/immich/upload /mnt/immich-nfs
+
+# Copy files
+cp -r /local/photos /mnt/immich-nfs/
+
+# Unmount
+sudo umount /mnt/immich-nfs
+#+END_SRC
+
+*** Persistent NFS Mount
+
+Edit =/etc/fstab=:
+
+#+BEGIN_SRC
+10.205.16.244:/mnt/immich/upload /mnt/immich-nfs nfs defaults,_netdev 0 0
+#+END_SRC
+
+* FTP-Based Methods
+
+** FTP/FTPS
+
+*** Description
+
+File Transfer Protocol - older but widely supported.
+
+*** Setup FTP Server (vsftpd)
+
+#+BEGIN_SRC bash
+# Install vsftpd
+sudo apt install vsftpd
+
+# Configure
+sudo nano /etc/vsftpd.conf
+#+END_SRC
+
+Key settings:
+
+#+BEGIN_SRC
+write_enable=YES
+local_enable=YES
+chroot_local_user=YES
+allow_writeable_chroot=YES
+#+END_SRC
+
+Restart:
+
+#+BEGIN_SRC bash
+sudo systemctl restart vsftpd
+#+END_SRC
+
+*** Using FTP from Command Line
+
+#+BEGIN_SRC bash
+# Connect
+ftp 10.205.16.244
+
+# Login with username/password
+# Navigate
+ftp> cd /mnt/immich/upload
+
+# Upload files
+ftp> mput Photos/*
+
+# Disconnect
+ftp> bye
+#+END_SRC
+
+*** GUI FTP Clients
+
+FileZilla, Transmit (Mac), WinSCP (Windows) all support FTP/FTPS.
+
+* Physical Transfer Methods
+
+** USB Drive Transfer
+
+*** When to Use
+
+- Network too slow
+- One-time large migration
+- Network reliability issues
+- Hundreds of gigabytes to transfer
+
+*** Process
+
+#+BEGIN_SRC bash
+# On Mac: Copy to external drive
+cp -r ~/Photos /Volumes/ExternalDrive/
+
+# Eject drive, connect to Immich server
+
+# On server: Copy from external drive
+sudo cp -r /media/external/Photos /mnt/immich/upload/
+sudo chown -R immich:immich /mnt/immich/upload/Photos
+
+# Trigger library scan in Immich web interface
+#+END_SRC
+
+*** Advantages
+- Fastest for very large collections
+- No network dependency
+- Reliable
+- "Never underestimate the bandwidth of a truck full of hard drives"
+
+* After Transfer: Completing the Import
+
+Regardless of transfer method, after files are on the server:
+
+** Step 1: Set Correct Permissions
+
+#+BEGIN_SRC bash
+# SSH to server
+ssh username@immich-server
+
+# Set ownership (find correct user first)
+docker exec immich_server id
+
+# Set ownership (example)
+sudo chown -R 1000:1000 /path/to/uploaded/photos
+#+END_SRC
+
+** Step 2: Trigger Library Scan
+
+1. Open Immich web interface
+2. Navigate to Administration → Jobs
+3. Find "Library Scan" job
+4. Click "Run Job" or "Scan All"
+5. Monitor progress
+
+** Step 3: Verify Import
+
+1. Check photos appear in Immich
+2. Verify metadata is preserved
+3. Test photo viewing
+4. Check album organization
+
+* Best Practices
+
+** Security
+
+1. *Use encrypted methods*
+   - SSH-based (SCP, SFTP, rsync over SSH): ✓ Encrypted
+   - SMB: ⚠️ Can be encrypted, configure carefully
+   - NFS: ❌ Not encrypted by default
+   - FTP: ❌ Not encrypted (use FTPS)
+
+2. *Limit access*
+   - Create dedicated transfer user
+   - Restrict to upload directory only
+   - Use strong passwords or SSH keys
+   - Disable after transfer if temporary
+
+3. *Firewall considerations*
+   - Only open required ports
+   - Limit source IP addresses
+   - Close ports after transfer
+
+** Performance
+
+1. *Use wired connections* when possible
+2. *Transfer during off-peak hours* for large collections
+3. *Use compression* for slow networks (rsync -z)
+4. *Limit bandwidth* if needed to avoid saturating network
+5. *Test with small batch* before full transfer
+
+** Reliability
+
+1. *Verify transfers*
+
+#+BEGIN_SRC bash
+# Using rsync checksum
+rsync -avzc --dry-run /source/ /destination/
+
+# Using md5sum
+find /source -type f -exec md5sum {} \; > source-checksums.txt
+find /destination -type f -exec md5sum {} \; > dest-checksums.txt
+diff source-checksums.txt dest-checksums.txt
+#+END_SRC
+
+2. *Keep originals until verified*
+   - Don't delete source files immediately
+   - Verify photos appear in Immich
+   - Test downloads from Immich
+   - Wait for backups to complete
+
+3. *Monitor disk space*
+
+#+BEGIN_SRC bash
+df -h /path/to/destination
+#+END_SRC
+
+* Troubleshooting
+
+** Permission Denied
+
+#+BEGIN_SRC bash
+# Check ownership
+ls -la /destination/path
+
+# Fix ownership
+sudo chown -R user:group /destination/path
+
+# Fix permissions
+sudo chmod -R 755 /destination/path
+#+END_SRC
+
+** Connection Refused
+
+- Verify server is running
+- Check firewall rules
+- Verify correct port
+- Test with telnet: =telnet server port=
+
+** Slow Transfers
+
+- Check network speed
+- Use wired connection
+- Enable compression (rsync -z)
+- Check server I/O: =iostat -x 1=
+- Check server CPU: =top=
+
+* Method Selection Guide
+
+** Choose SCP when:
+- Simple one-time transfer
+- SSH already available
+- No need for incremental updates
+- Small to medium collections
+
+** Choose rsync when:
+- Large collections
+- Need incremental updates
+- Want resume capability
+- Need to sync regularly
+
+** Choose SFTP when:
+- Prefer GUI client
+- Interactive file management
+- Need to browse before transferring
+- Less comfortable with command line
+
+** Choose SMB when:
+- Mac or Windows client
+- Need persistent network drive
+- Regular ongoing access
+- Mixed operating systems
+
+** Choose NFS when:
+- Linux-to-Linux
+- Need best performance
+- On trusted local network
+- Regular ongoing access
+
+** Choose USB when:
+- Network too slow (< 100 Mbps)
+- Very large collection (> 500 GB)
+- Unreliable network
+- One-time migration
+
+* Related Topics
+
+- [[file:immich-bulk-import-methods.org][Bulk Import Methods Overview]]
+- [[file:immich-cli-setup.org][Immich CLI Setup]]
+- [[file:immich-storage-locations.org][Storage Locations]]
+- [[file:immich-external-libraries.org][External Libraries]]
+
+* TODO Tasks
+
+- TODO Document network performance benchmarks
+- TODO Create automated verification scripts
+- TODO Document firewall configuration for each method
+- TODO Create wrapper scripts for common scenarios

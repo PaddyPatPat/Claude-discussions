@@ -1,0 +1,352 @@
+#+TITLE: Immich File Organization Strategies
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich organization albums folder-structure metadata
+
+* Overview
+
+Immich handles file organization differently than traditional folder-based photo management systems. Understanding how Immich organizes files versus how it presents them to users is crucial for deciding on an import strategy.
+
+* Immich's Organization Philosophy
+
+** Database-Driven vs Folder-Based
+
+Immich uses a database-centric approach rather than relying on folder structures:
+
+- *Traditional approach*: Folders represent organization (e.g., =Photos/2023/Vacation/=)
+- *Immich approach*: Database stores metadata; files organized by date/user
+- *User view*: Albums, tags, and metadata provide organization
+- *File system*: Optimized storage structure independent of user organization
+
+* How Immich Organizes Files on Disk
+
+** Automatic Reorganization
+
+When you upload files to Immich (via CLI, web interface, or direct copy + scan):
+
+1. Immich reads EXIF metadata (date taken, camera, location, etc.)
+2. Files are moved/copied into Immich's internal structure
+3. Original folder names are *not* preserved in file system
+4. Organization happens in the database, not folders
+
+** Internal Folder Structure
+
+Immich typically organizes files like this:
+
+#+BEGIN_SRC
+/library/
+├── [user-id]/
+│   ├── 2023/
+│   │   ├── 2023-01/
+│   │   │   ├── IMG_1234.jpg
+│   │   │   ├── IMG_1235.jpg
+│   │   ├── 2023-02/
+│   │   │   ├── IMG_1236.jpg
+│   ├── 2024/
+│   │   ├── 2024-01/
+│   │   │   ├── IMG_2001.jpg
+#+END_SRC
+
+Organization based on:
+- *Date taken* (from EXIF data)
+- *User ID*
+- *Year/Month structure*
+
+** What Gets Lost
+
+When using standard import methods:
+
+- ❌ Original folder names
+- ❌ Folder hierarchy
+- ❌ Custom organization structure
+- ✓ EXIF metadata (date, camera, location)
+- ✓ File names
+- ✓ Image content
+- ⚠️ Folder names *may* become album names (depends on import method)
+
+* How to Preserve Your Organization
+
+** Option 1: Use Albums
+
+Immich's album feature provides logical organization:
+
+*** Albums from Folders (CLI Upload)
+
+The CLI can convert folder structure to albums:
+
+#+BEGIN_SRC bash
+immich upload Photos/Vacation --album "Summer Vacation 2023"
+#+END_SRC
+
+During import, folder names may automatically become album names (behavior varies by version).
+
+*** Manual Album Creation
+
+After import:
+1. Select photos in Immich web interface
+2. Click "Add to Album"
+3. Create album with descriptive name
+4. Organize photos into logical collections
+
+*** Album Features
+
+- Multiple photos can be in multiple albums
+- Albums can be shared
+- Albums can have descriptions
+- Albums are independent of file storage location
+
+** Option 2: Use External Libraries (Preserves Structure)
+
+*This is the solution if preserving folder structure is critical.*
+
+External libraries allow Immich to index photos without moving them:
+
+- Files stay in original location
+- Original folder structure preserved
+- Immich indexes and displays them
+- No file duplication
+- See [[file:immich-external-libraries.org][External Libraries Configuration]]
+
+** Option 3: Use Tags and Metadata
+
+Immich supports rich metadata:
+
+- Tags (manual or automatic)
+- People recognition
+- Object/scene detection
+- Location data
+- Date-based organization
+- Search by metadata
+
+* Import Methods and Organization Impact
+
+** Immich CLI Upload
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive
+#+END_SRC
+
+*Result*:
+- Files reorganized by date
+- Original folder structure lost
+- May create albums from folder names
+- All metadata preserved
+
+** Direct Server Copy + Library Scan
+
+#+BEGIN_SRC bash
+cp -r /source/photos/* /immich/upload/location/
+# Then trigger library scan in web interface
+#+END_SRC
+
+*Result*:
+- Same as CLI upload
+- Immich still reorganizes files
+- Original structure lost
+- Metadata preserved
+
+** External Library Mount
+
+#+BEGIN_SRC yaml
+# Mount external location
+- /nas/photos:/external/photos
+#+END_SRC
+
+*Result*:
+- ✓ Original structure preserved
+- ✓ No file duplication
+- ✓ Files stay in place
+- ⚠️ Requires permanent network access
+
+* Folder Structure Examples
+
+** Before Import (Your Organization)
+
+#+BEGIN_SRC
+Photos/
+├── 2023/
+│   ├── Vacation-Summer/
+│   │   ├── Day1/
+│   │   ├── Day2/
+│   ├── Family-Events/
+│   │   ├── Birthday/
+│   │   ├── Wedding/
+├── 2024/
+│   ├── Work/
+│   ├── Personal/
+#+END_SRC
+
+** After CLI/Web Upload (Immich's Organization)
+
+#+BEGIN_SRC
+/library/user-abc123/
+├── 2023/
+│   ├── 2023-06/  # All June photos together
+│   │   ├── IMG_001.jpg  # From Vacation Day1
+│   │   ├── IMG_002.jpg  # From Vacation Day1
+│   │   ├── IMG_015.jpg  # From Vacation Day2
+│   ├── 2023-07/
+│   │   ├── IMG_050.jpg  # From Birthday
+│   │   ├── IMG_051.jpg  # From Wedding
+├── 2024/
+│   ├── 2024-01/
+│   │   ├── IMG_100.jpg  # Work photos
+│   │   ├── IMG_101.jpg  # Personal photos
+#+END_SRC
+
+*Organized by date taken, not original folders*
+
+** With External Library (Preserved Structure)
+
+#+BEGIN_SRC
+/external/photos/  # Original location, unchanged
+├── 2023/
+│   ├── Vacation-Summer/
+│   │   ├── Day1/
+│   │   ├── Day2/
+│   ├── Family-Events/
+│   │   ├── Birthday/
+│   │   ├── Wedding/
+#+END_SRC
+
+*Immich indexes but doesn't move files*
+
+* Recreating Organization in Immich
+
+** Strategy 1: Album-Based
+
+1. Import all photos (they get reorganized by date)
+2. Use search/filters to find related photos
+3. Create albums for events/topics
+4. Organize photos into albums
+
+Example:
+- Album: "Summer Vacation 2023"
+- Album: "Sarah's Birthday"
+- Album: "Work Conference 2024"
+
+** Strategy 2: Tag-Based
+
+1. Import photos
+2. Tag photos with relevant keywords
+3. Use tag search to find collections
+4. Combine with date filters
+
+Example tags:
+- vacation, summer, beach
+- family, birthday
+- work, conference
+
+** Strategy 3: Hybrid (Albums + Tags + Search)
+
+Combine multiple organization methods:
+- Albums for major events
+- Tags for themes/subjects
+- Date filters for time-based browsing
+- Location search for place-based organization
+- People recognition for person-based organization
+
+* Best Practices
+
+** Before Import
+
+1. *Decide on organization strategy*:
+   - Standard import + recreate with albums?
+   - External library to preserve structure?
+   - Hybrid approach?
+
+2. *Clean up source folders*:
+   - Remove duplicates
+   - Fix incorrect dates if possible
+   - Organize logically if using external libraries
+
+3. *Document your structure*:
+   - Note important folder organizations
+   - Plan album structure
+   - Identify tags to use
+
+** During Import
+
+1. *Test with small batch*:
+   - Upload one folder
+   - Check how it appears in Immich
+   - Verify metadata preservation
+   - Test organization features
+
+2. *Consider batch imports by topic*:
+   - Import vacation photos together
+   - Create album immediately after import
+   - Easier to organize than one giant import
+
+** After Import
+
+1. *Create albums promptly*:
+   - Organize while still fresh in mind
+   - Use search to find related photos
+   - Take advantage of date/location filters
+
+2. *Use automatic features*:
+   - People recognition
+   - Object detection
+   - Location tagging
+
+3. *Don't rely solely on filesystem*:
+   - Think in terms of albums and searches
+   - Leverage database capabilities
+   - Use metadata to organize
+
+* Decision Guide: Which Approach?
+
+** Use Standard Import (CLI/Web) If:
+
+- You want Immich to manage storage optimization
+- You're comfortable with album-based organization
+- You don't need to access files outside Immich
+- You want to take full advantage of Immich features
+- Storage space for duplication is not a concern
+
+** Use External Libraries If:
+
+- Preserving folder structure is critical
+- Other applications need access to same files
+- Storage space for duplication is limited
+- You have existing workflows dependent on folder structure
+- You want to maintain manual control over file organization
+
+** Hybrid Approach:
+
+- Main library in Immich (standard import)
+- External library for archive/backup
+- Active photos imported, archived photos as external
+- Best of both worlds, more complex to manage
+
+* Migrating Organization
+
+** From Folder-Based to Album-Based
+
+#+BEGIN_SRC bash
+# Import each major folder separately and create album
+immich upload ~/Photos/Vacation-2023 --album "Summer Vacation 2023"
+immich upload ~/Photos/Birthday-2023 --album "Sarah's Birthday"
+#+END_SRC
+
+** From Standard to External Library
+
+1. Set up external library pointing to original photos
+2. Import original photos through external library
+3. Remove duplicates from standard library
+4. Update workflows to use external library structure
+
+* Related Topics
+
+- [[file:immich-bulk-import-methods.org][Bulk Import Methods]]
+- [[file:immich-external-libraries.org][External Libraries Configuration]]
+- [[file:immich-cli-setup.org][CLI Setup and Usage]]
+- [[file:immich-storage-locations.org][Storage Locations]]
+
+* TODO Tasks
+
+- TODO Document automatic album creation from folder structure
+- TODO Test folder-to-album conversion with different CLI versions
+- TODO Create scripts for batch album creation
+- TODO Document metadata enrichment strategies

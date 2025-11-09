@@ -1,0 +1,470 @@
+#+TITLE: Immich External Libraries Configuration
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich external-libraries nas network-storage folder-structure
+
+* Overview
+
+External Libraries in Immich allow you to index and view photos stored outside of Immich's standard upload directory. This approach preserves your original folder structure, avoids file duplication, and enables multiple systems to access the same photo collection.
+
+* What Are External Libraries?
+
+** Definition
+
+An external library is a network-mounted or local directory that Immich indexes without moving or copying the files. Immich reads the photos, extracts metadata, generates thumbnails, but leaves the original files in place.
+
+** Key Differences from Standard Upload
+
+| Feature | Standard Upload | External Library |
+|---------+-----------------+------------------|
+| File location | Moved to Immich storage | Stays in original location |
+| Folder structure | Reorganized by date | Preserved exactly |
+| Storage duplication | Yes | No |
+| Network dependency | No | Yes (if network mount) |
+| Write access needed | Yes | No (read-only works) |
+
+* Why Use External Libraries?
+
+** Advantages
+
+1. *Preserve folder organization*
+   - Original structure remains intact
+   - Folder names retained
+   - Hierarchy preserved
+
+2. *No storage duplication*
+   - Critical when storage is limited
+   - Important for very large collections
+   - Saves hundreds of gigabytes
+
+3. *Multi-system access*
+   - Same files accessible from multiple applications
+   - Keep using existing photo workflows
+   - Gradual migration to Immich
+
+4. *Existing network storage*
+   - Photos already on NAS
+   - Shared network drives
+   - Existing backup systems
+
+** Disadvantages
+
+1. *Network dependency*
+   - Requires persistent connection to storage
+   - Network issues affect access
+   - Slower access than local storage
+
+2. *Performance considerations*
+   - Network latency affects load times
+   - Thumbnail generation slower
+   - More dependent on network speed
+
+3. *Complexity*
+   - More complex setup
+   - Network mount configuration required
+   - Permission management more involved
+
+* Setup Requirements
+
+** Prerequisites
+
+1. *Network-accessible storage*
+   - NAS (Synology, QNAP, etc.)
+   - Network share (SMB/CIFS, NFS)
+   - Mounted external drive
+   - Mac sharing enabled
+
+2. *Immich server access*
+   - Ability to modify Docker Compose configuration
+   - SSH or console access to server
+   - Permission to mount network shares
+
+3. *Persistent mount*
+   - Mount survives reboots
+   - Proper authentication
+   - Reliable network connection
+
+* Configuration Steps
+
+** Step 1: Set Up Network Share
+
+*** On Mac (Source of Photos)
+
+Enable File Sharing:
+
+1. Open *System Settings*
+2. Go to *General* → *Sharing*
+3. Enable *File Sharing*
+4. Add the folder containing photos
+5. Set permissions (read-only is sufficient)
+6. Note the SMB address (e.g., =smb://10.205.16.249/Photos=)
+
+*** On NAS
+
+Configure SMB/NFS share:
+
+1. Access NAS admin interface
+2. Create or identify shared folder with photos
+3. Enable SMB or NFS sharing
+4. Configure permissions (Immich user needs read access)
+5. Note the share path
+
+** Step 2: Mount Share on Immich Server
+
+*** Create Mount Point
+
+#+BEGIN_SRC bash
+sudo mkdir -p /mnt/external-photos
+#+END_SRC
+
+*** Test Manual Mount (SMB)
+
+#+BEGIN_SRC bash
+sudo mount -t cifs //10.205.16.249/Photos /mnt/external-photos \
+  -o username=youruser,password=yourpass,uid=1000,gid=1000
+#+END_SRC
+
+*** Test Manual Mount (NFS)
+
+#+BEGIN_SRC bash
+sudo mount -t nfs 10.205.16.249:/volume1/Photos /mnt/external-photos
+#+END_SRC
+
+*** Verify Mount
+
+#+BEGIN_SRC bash
+ls -la /mnt/external-photos
+#+END_SRC
+
+You should see your photos.
+
+** Step 3: Configure Persistent Mount
+
+*** Using /etc/fstab (Permanent)
+
+Edit fstab:
+
+#+BEGIN_SRC bash
+sudo nano /etc/fstab
+#+END_SRC
+
+Add entry (SMB):
+
+#+BEGIN_SRC
+//10.205.16.249/Photos /mnt/external-photos cifs username=user,password=pass,uid=1000,gid=1000,_netdev 0 0
+#+END_SRC
+
+Add entry (NFS):
+
+#+BEGIN_SRC
+10.205.16.249:/volume1/Photos /mnt/external-photos nfs defaults,_netdev 0 0
+#+END_SRC
+
+Test:
+
+#+BEGIN_SRC bash
+sudo mount -a
+#+END_SRC
+
+*** Using Credentials File (More Secure for SMB)
+
+Create credentials file:
+
+#+BEGIN_SRC bash
+sudo nano /etc/smbcredentials
+#+END_SRC
+
+Add credentials:
+
+#+BEGIN_SRC
+username=youruser
+password=yourpassword
+#+END_SRC
+
+Secure the file:
+
+#+BEGIN_SRC bash
+sudo chmod 600 /etc/smbcredentials
+#+END_SRC
+
+Update fstab to use credentials:
+
+#+BEGIN_SRC
+//10.205.16.249/Photos /mnt/external-photos cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,_netdev 0 0
+#+END_SRC
+
+** Step 4: Configure Docker Volume
+
+Edit your docker-compose.yml:
+
+#+BEGIN_SRC yaml
+services:
+  immich-server:
+    volumes:
+      - ${UPLOAD_LOCATION}:/usr/src/app/upload
+      - /mnt/external-photos:/external/photos:ro  # :ro for read-only
+#+END_SRC
+
+Notes:
+- =:ro= makes it read-only (recommended)
+- Path inside container: =/external/photos=
+- Host path: =/mnt/external-photos=
+
+** Step 5: Restart Immich
+
+#+BEGIN_SRC bash
+cd /path/to/immich
+docker-compose down
+docker-compose up -d
+#+END_SRC
+
+** Step 6: Add External Library in Immich
+
+1. Open Immich web interface
+2. Go to *Administration*
+3. Navigate to *External Libraries*
+4. Click *Add External Library*
+5. Configure:
+   - Name: "Mac Photos" (or descriptive name)
+   - Path: =/external/photos=
+   - Import paths: Leave empty for full directory, or specify subdirectories
+6. Click *Create*
+7. Click *Scan Library* to start indexing
+
+* Configuration Examples
+
+** Example 1: Mac SMB Share to Linux Immich Server
+
+docker-compose.yml:
+
+#+BEGIN_SRC yaml
+services:
+  immich-server:
+    volumes:
+      - ${UPLOAD_LOCATION}:/usr/src/app/upload
+      - /mnt/mac-photos:/external/mac:ro
+#+END_SRC
+
+/etc/fstab:
+
+#+BEGIN_SRC
+//10.205.16.249/Photos /mnt/mac-photos cifs credentials=/etc/smbcredentials,uid=1000,gid=1000,_netdev 0 0
+#+END_SRC
+
+Immich External Library:
+- Name: "Mac Photos"
+- Path: =/external/mac=
+
+** Example 2: Synology NAS to Immich
+
+docker-compose.yml:
+
+#+BEGIN_SRC yaml
+services:
+  immich-server:
+    volumes:
+      - ./library:/usr/src/app/upload
+      - /mnt/synology-photos:/external/nas:ro
+#+END_SRC
+
+/etc/fstab:
+
+#+BEGIN_SRC
+192.168.1.100:/volume1/photos /mnt/synology-photos nfs defaults,_netdev 0 0
+#+END_SRC
+
+Immich External Library:
+- Name: "NAS Photo Archive"
+- Path: =/external/nas=
+
+** Example 3: Multiple External Libraries
+
+docker-compose.yml:
+
+#+BEGIN_SRC yaml
+services:
+  immich-server:
+    volumes:
+      - ./library:/usr/src/app/upload
+      - /mnt/current-photos:/external/current:ro
+      - /mnt/archive-photos:/external/archive:ro
+      - /mnt/family-shared:/external/family:ro
+#+END_SRC
+
+Three separate external libraries in Immich:
+1. "Current Photos" → =/external/current=
+2. "Photo Archive" → =/external/archive=
+3. "Family Shared" → =/external/family=
+
+* Managing External Libraries
+
+** Scanning for New Photos
+
+External libraries don't automatically detect new photos. You must trigger scans:
+
+1. *Manual scan*:
+   - Administration → External Libraries
+   - Click *Scan* button for the library
+
+2. *Scheduled scans*:
+   - Set up cron job to trigger via API
+   - Or use Immich's scheduled job features
+
+** Updating Metadata
+
+If you modify photos or metadata externally:
+
+1. Go to Administration → External Libraries
+2. Select the library
+3. Click *Re-scan* or *Force Re-scan*
+4. Immich updates its database
+
+** Removing External Libraries
+
+To remove an external library:
+
+1. Administration → External Libraries
+2. Select library to remove
+3. Click *Delete*
+4. Choose whether to:
+   - Remove from Immich only (files untouched)
+   - Remove files (if you have write permission)
+
+*Warning*: If you choose to delete files, they will be permanently removed from the source!
+
+* Troubleshooting
+
+** Problem: Mount Not Persisting After Reboot
+
+*Symptoms*: External library works until reboot, then disappears
+
+*Solutions*:
+1. Check fstab syntax (no typos)
+2. Ensure =_netdev= option is present
+3. Verify network is available before mount attempts
+4. Check systemd mount units as alternative
+
+Test mount manually:
+#+BEGIN_SRC bash
+sudo mount -a
+sudo systemctl daemon-reload
+#+END_SRC
+
+** Problem: Permission Denied
+
+*Symptoms*: Immich can't read external library files
+
+*Solutions*:
+1. Check mount permissions (=ls -la /mnt/external-photos=)
+2. Verify uid/gid match Immich container user
+3. Ensure source share has correct permissions
+4. Check Docker container user in docker-compose.yml
+
+Find Immich container user:
+#+BEGIN_SRC bash
+docker exec immich_server id
+#+END_SRC
+
+** Problem: Slow Performance
+
+*Symptoms*: Photos load slowly, timeouts during scans
+
+*Solutions*:
+1. Check network speed between server and storage
+2. Use wired connection instead of WiFi
+3. Consider caching strategies
+4. Optimize network share settings (SMB: disable signing, NFS: use TCP)
+5. Generate thumbnails during off-peak hours
+
+** Problem: Files Not Appearing
+
+*Symptoms*: External library scan completes but photos missing
+
+*Solutions*:
+1. Verify mount path matches Immich configuration exactly
+2. Check file formats are supported
+3. Look for errors in Immich logs
+4. Ensure scan completed successfully
+5. Try force re-scan
+
+Check logs:
+#+BEGIN_SRC bash
+docker logs immich_server | grep -i external
+#+END_SRC
+
+* Best Practices
+
+** Security
+
+1. *Use read-only mounts* when possible (=:ro=)
+2. *Store credentials securely* (not in plain text in fstab)
+3. *Limit network exposure* of file shares
+4. *Use strong authentication* for SMB/NFS shares
+
+** Reliability
+
+1. *Test mounts survive reboots*
+2. *Monitor mount status* with automated checks
+3. *Set up alerting* for mount failures
+4. *Document configuration* for disaster recovery
+
+** Performance
+
+1. *Use gigabit or faster networks*
+2. *Prefer wired over WiFi*
+3. *Schedule intensive scans* during off-peak hours
+4. *Consider local caching* for frequently accessed files
+
+** Organization
+
+1. *Keep external libraries organized* at source
+2. *Document folder structure*
+3. *Separate active and archive photos*
+4. *Use descriptive library names* in Immich
+
+* Hybrid Approach: Standard + External
+
+Combine both approaches:
+
+** Strategy
+
+- *Standard library*: Active, frequently accessed photos
+- *External library*: Archive, less frequently accessed photos
+
+** Benefits
+
+- Fast access to current photos
+- No duplication of archive
+- Best performance where it matters
+- Storage efficiency for archive
+
+** Configuration
+
+docker-compose.yml:
+
+#+BEGIN_SRC yaml
+services:
+  immich-server:
+    volumes:
+      - ./library:/usr/src/app/upload  # Active photos
+      - /mnt/archive:/external/archive:ro  # Old photos
+#+END_SRC
+
+Workflow:
+1. Upload current year photos via CLI (standard library)
+2. Keep previous years on NAS as external library
+3. Move photos from standard to archive yearly
+
+* Related Topics
+
+- [[file:immich-file-organization.org][File Organization Strategies]]
+- [[file:immich-bulk-import-methods.org][Bulk Import Methods]]
+- [[file:immich-storage-locations.org][Storage Locations]]
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods]]
+
+* TODO Tasks
+
+- TODO Document automatic mount monitoring scripts
+- TODO Create health check scripts for external libraries
+- TODO Document migration from standard to external library
+- TODO Test performance benchmarks for different network configurations

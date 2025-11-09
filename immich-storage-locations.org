@@ -1,0 +1,304 @@
+#+TITLE: Immich Storage Locations and Configuration
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich storage docker volumes configuration filesystem
+
+* Overview
+
+Understanding where Immich stores uploaded photos is essential for direct server access, backups, and troubleshooting. This document covers how to find and configure Immich's storage locations, particularly for Docker-based installations.
+
+* Docker Installation Storage
+
+Most Immich installations use Docker Compose, which maps storage volumes from the host system into the container.
+
+** Standard Volume Mapping
+
+In a typical Docker Compose setup, the storage mapping looks like this:
+
+#+BEGIN_SRC yaml
+volumes:
+  - ${UPLOAD_LOCATION}:/usr/src/app/upload
+#+END_SRC
+
+** Path Components
+
+*** Inside Docker Container
+- Default path: =/usr/src/app/upload=
+- This is where Immich sees the files from within the container
+- Always consistent regardless of host configuration
+
+*** On Host System
+- Variable path: Defined in your =.env= file
+- Commonly: =/path/to/immich/library= or =./library= or =/mnt/immich-data=
+- This is where files actually live on your server
+
+* Finding Your Storage Location
+
+** Method 1: Check .env File
+
+The most reliable method is to check your Immich installation's environment file:
+
+#+BEGIN_SRC bash
+cd /path/to/immich/installation
+cat .env | grep UPLOAD_LOCATION
+#+END_SRC
+
+Look for a line like:
+#+BEGIN_SRC bash
+UPLOAD_LOCATION=/mnt/immich-data
+#+END_SRC
+
+** Method 2: Check docker-compose.yml
+
+Examine the volume mappings in your Docker Compose configuration:
+
+#+BEGIN_SRC bash
+cd /path/to/immich/installation
+cat docker-compose.yml | grep -A 5 "volumes:"
+#+END_SRC
+
+Look for the =immich-server= service volumes section.
+
+** Method 3: Use Docker Inspect
+
+Query Docker directly to see the volume mounts:
+
+#+BEGIN_SRC bash
+docker inspect immich_server | grep -A 10 "Mounts"
+#+END_SRC
+
+This shows the actual mounted volumes and their paths.
+
+** Method 4: Immich Web Interface
+
+Check the admin settings in Immich's web interface:
+
+1. Log in to Immich web interface
+2. Go to *Administration*
+3. Navigate to *Settings*
+4. Look under *Storage* section
+
+* Common Storage Locations
+
+** Typical Configurations
+
+| Installation Type | Common Path |
+|-------------------+-------------|
+| Docker Compose (relative) | =./library= |
+| Docker Compose (absolute) | =/mnt/immich-data= |
+| Docker Compose (user home) | =~/immich/library= |
+| Docker Compose (media drive) | =/media/photos/immich= |
+
+** Default Locations by Platform
+
+*** Linux
+- =/var/lib/immich=
+- =/opt/immich/library=
+- =/home/username/immich/library=
+
+*** NAS Systems (Synology, QNAP, etc.)
+- =/volume1/docker/immich/library=
+- =/share/Container/immich/library=
+
+* Direct Server Access Workflow
+
+** Step 1: Identify Storage Path
+
+Use one of the methods above to find your upload location.
+
+** Step 2: Check Permissions
+
+Ensure the upload directory has correct ownership:
+
+#+BEGIN_SRC bash
+ls -la /path/to/upload/location
+#+END_SRC
+
+Look for the owner/group of existing files.
+
+** Step 3: Copy Files with Correct Permissions
+
+*** Option A: Copy and Set Ownership
+
+#+BEGIN_SRC bash
+# Copy files
+cp -r /source/photos/* /path/to/upload/location/
+
+# Set correct ownership (replace 'immich:immich' with actual user:group)
+sudo chown -R immich:immich /path/to/upload/location/
+#+END_SRC
+
+*** Option B: Copy as Correct User
+
+#+BEGIN_SRC bash
+# Copy files as the immich user
+sudo -u immich cp -r /source/photos/* /path/to/upload/location/
+#+END_SRC
+
+** Step 4: Trigger Library Scan
+
+After copying files directly:
+
+1. Open Immich web interface
+2. Go to *Administration* → *Jobs*
+3. Find *Library Scan* or *Storage Migration*
+4. Click to run the job
+5. Monitor progress
+
+* Storage Structure
+
+** Immich's Internal Organization
+
+When Immich processes uploaded files, it reorganizes them:
+
+#+BEGIN_SRC
+/upload/
+├── library/
+│   ├── [user-id]/
+│   │   ├── 2023/
+│   │   │   ├── 2023-01/
+│   │   │   │   └── [various photos]
+│   │   │   ├── 2023-02/
+│   │   │   │   └── [various photos]
+│   │   ├── 2024/
+│   │   │   ├── 2024-01/
+│   │   │   └── 2024-02/
+├── thumbs/
+│   └── [thumbnail cache]
+└── encoded-video/
+    └── [transcoded videos]
+#+END_SRC
+
+** Key Directories
+
+| Directory | Purpose |
+|-----------+---------|
+| =library/= | Original uploaded photos and videos |
+| =thumbs/= | Generated thumbnails for fast preview |
+| =encoded-video/= | Transcoded video files |
+| =profile/= | User profile images |
+
+* Backup Considerations
+
+** What to Backup
+
+1. *Library directory* - Essential (contains all photos)
+2. *Database* - Essential (contains metadata, albums, user data)
+3. *Thumbs directory* - Optional (can be regenerated)
+4. *Encoded video* - Optional (can be regenerated)
+
+** Backup Strategy
+
+#+BEGIN_SRC bash
+# Backup library (essential)
+rsync -av /path/to/immich/library /backup/location/
+
+# Backup database (essential - method varies by database type)
+docker exec immich_postgres pg_dump -U postgres immich > backup.sql
+#+END_SRC
+
+** Space Considerations
+
+- Library size ≈ Original photo collection size
+- Thumbs ≈ 1-5% of library size
+- Encoded video ≈ 10-30% of original video size
+- Database ≈ Usually < 1 GB for typical collections
+
+* Storage Optimization
+
+** Disk Space Monitoring
+
+Check available space regularly:
+
+#+BEGIN_SRC bash
+df -h /path/to/upload/location
+#+END_SRC
+
+** Cleaning Up Space
+
+*** Remove Duplicate Assets
+Use Immich's web interface:
+1. Administration → Jobs
+2. Find "Remove Duplicate Assets"
+3. Run job
+
+*** Remove Orphaned Files
+1. Administration → Jobs
+2. Find "Storage Migration" or "Filesystem Check"
+3. Run cleanup job
+
+** External Storage
+
+For large libraries, consider:
+- Mounting external drives
+- Using NAS storage
+- Setting up network mounts
+- See [[file:immich-external-libraries.org][External Libraries Configuration]]
+
+* Multiple Storage Locations
+
+Immich supports multiple libraries with different storage paths:
+
+** Configuration
+
+In docker-compose.yml:
+
+#+BEGIN_SRC yaml
+volumes:
+  - ${UPLOAD_LOCATION}:/usr/src/app/upload
+  - ${EXTERNAL_PATH_1}:/external/photos
+  - ${EXTERNAL_PATH_2}:/external/archive
+#+END_SRC
+
+** Use Cases
+
+- Separate active and archived photos
+- Use different drives for different collections
+- Separate user libraries
+- Performance optimization (SSD vs HDD)
+
+* Troubleshooting Storage Issues
+
+** Problem: Can't Find Upload Location
+
+1. Check .env file in Immich installation directory
+2. Verify Docker Compose configuration
+3. Use docker inspect to see actual mounts
+4. Check Immich web interface admin settings
+
+** Problem: Permission Denied
+
+1. Check file ownership: =ls -la /path/to/upload=
+2. Verify the user running Docker container
+3. Set correct ownership: =chown -R user:group /path=
+4. Check Docker user mapping in compose file
+
+** Problem: Disk Space Full
+
+1. Check disk usage: =df -h=
+2. Clean up thumbnails (can be regenerated)
+3. Remove duplicate assets via web interface
+4. Consider moving to larger storage
+5. Set up external libraries instead of copying files
+
+** Problem: Files Not Appearing After Copy
+
+1. Verify files are in correct location
+2. Check file permissions
+3. Trigger library scan in Administration → Jobs
+4. Check Immich logs for errors
+5. Verify file formats are supported
+
+* Related Topics
+
+- [[file:immich-bulk-import-methods.org][Bulk Import Methods]]
+- [[file:immich-external-libraries.org][External Libraries Setup]]
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods]]
+- [[file:immich-file-organization.org][File Organization Strategies]]
+
+* TODO Tasks
+
+- TODO Document storage requirements for different collection sizes
+- TODO Create backup automation scripts
+- TODO Document migration from one storage location to another
+- TODO Set up monitoring alerts for disk space

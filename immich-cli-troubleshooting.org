@@ -1,0 +1,593 @@
+#+TITLE: Immich CLI Troubleshooting Guide
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich cli troubleshooting network-errors authentication debugging
+
+* Overview
+
+This guide covers common issues encountered when using the Immich CLI for bulk photo imports, with detailed troubleshooting steps and solutions based on real-world scenarios.
+
+* Authentication Issues
+
+** Error: "missing required argument 'key'"
+
+*** Symptom
+
+#+BEGIN_SRC
+$ immich login http://10.205.16.244:2283
+error: missing required argument 'key'
+#+END_SRC
+
+*** Cause
+
+The CLI syntax changed in recent versions. Older versions prompted for the API key, but newer versions require it as a command-line argument.
+
+*** Solution 1: Provide API Key Directly
+
+#+BEGIN_SRC bash
+immich login http://10.205.16.244:2283 your-api-key-here
+#+END_SRC
+
+*** Solution 2: Use --key Flag
+
+#+BEGIN_SRC bash
+immich login http://10.205.16.244:2283 --key your-api-key-here
+#+END_SRC
+
+*** Solution 3: Update CLI
+
+Ensure you have the latest version:
+
+#+BEGIN_SRC bash
+npm update -g @immich/cli
+immich --version
+#+END_SRC
+
+*** Solution 4: Use Environment Variables
+
+Skip the login command entirely:
+
+#+BEGIN_SRC bash
+export IMMICH_SERVER_URL=http://10.205.16.244:2283
+export IMMICH_API_KEY=your-api-key-here
+immich server-info  # Test connection
+#+END_SRC
+
+* Network Connectivity Issues
+
+** Error: "TypeError: fetch failed" During Login
+
+*** Symptom
+
+#+BEGIN_SRC
+Logging in to http://10.205.16.244
+Failed to load user info - TypeError: fetch failed
+#+END_SRC
+
+*** Cause
+
+Network connectivity issue between your machine and the Immich server. The CLI can't reach the API endpoint.
+
+*** Diagnosis Steps
+
+1. *Test basic connectivity*:
+
+#+BEGIN_SRC bash
+ping 10.205.16.244
+#+END_SRC
+
+2. *Test HTTP connectivity*:
+
+#+BEGIN_SRC bash
+curl -I http://10.205.16.244:2283
+#+END_SRC
+
+Expected: HTTP response (even if 404)
+Problem: Connection timeout or refused
+
+3. *Test API endpoint*:
+
+#+BEGIN_SRC bash
+curl http://10.205.16.244:2283/api/server/ping
+#+END_SRC
+
+Expected: ={"res":"pong"}=
+
+4. *Check firewall/proxy*:
+   - Temporarily disable VPN
+   - Check corporate firewall rules
+   - Verify no proxy intercepting connections
+
+*** Solutions
+
+**** Correct Server URL
+
+Ensure you're using the exact URL that works in your web browser:
+
+#+BEGIN_SRC bash
+# If browser uses: http://10.205.16.244:2283
+immich login http://10.205.16.244:2283 your-api-key
+
+# If browser uses: https://immich.example.com
+immich login https://immich.example.com your-api-key
+#+END_SRC
+
+**** Verify Port Number
+
+Common Immich ports:
+- 2283 (default)
+- 3001 (older versions)
+- 8080 (custom)
+
+Try different ports if default doesn't work:
+
+#+BEGIN_SRC bash
+curl http://10.205.16.244:2283/api/server/ping
+curl http://10.205.16.244:3001/api/server/ping
+#+END_SRC
+
+**** Use Environment Variables
+
+Sometimes works when direct login fails:
+
+#+BEGIN_SRC bash
+export IMMICH_SERVER_URL=http://10.205.16.244:2283
+export IMMICH_API_KEY=your-api-key
+immich server-info
+#+END_SRC
+
+** Error: "EHOSTDOWN" During Upload
+
+*** Symptom
+
+#+BEGIN_SRC
+TypeError: fetch failed
+  [cause]: Error: connect EHOSTDOWN 10.205.16.244:2283 - Local (10.205.16.249:55691)
+    errno: -64,
+    code: 'EHOSTDOWN',
+    syscall: 'connect',
+#+END_SRC
+
+*** Cause
+
+Network connectivity lost or server became unreachable during upload. "Host down" specifically means the network route to the server is unavailable.
+
+*** Immediate Checks
+
+1. *Verify server is still running*:
+
+#+BEGIN_SRC bash
+curl http://10.205.16.244:2283/api/server/ping
+#+END_SRC
+
+2. *Check network connectivity*:
+
+#+BEGIN_SRC bash
+ping 10.205.16.244
+#+END_SRC
+
+3. *Verify environment variables are correct*:
+
+#+BEGIN_SRC bash
+echo $IMMICH_SERVER_URL
+echo $IMMICH_API_KEY
+#+END_SRC
+
+*** Solutions
+
+**** Re-establish Connection
+
+#+BEGIN_SRC bash
+# Verify connection works
+curl http://10.205.16.244:2283/api/server/ping
+
+# If ping works, try upload again
+immich upload Photos --recursive
+#+END_SRC
+
+**** Set Environment Variables Explicitly
+
+#+BEGIN_SRC bash
+export IMMICH_SERVER_URL=http://10.205.16.244:2283
+export IMMICH_API_KEY=your-api-key
+
+# Verify connection
+immich server-info
+
+# Then try upload
+immich upload Photos --recursive
+#+END_SRC
+
+**** Use Explicit Server Parameter
+
+#+BEGIN_SRC bash
+immich upload Photos \
+  --recursive \
+  --server http://10.205.16.244:2283 \
+  --key your-api-key
+#+END_SRC
+
+**** Network Troubleshooting
+
+#+BEGIN_SRC bash
+# Test if port is accessible
+telnet 10.205.16.244 2283
+
+# Check route to server
+traceroute 10.205.16.244
+
+# Look for network issues
+netstat -an | grep 2283
+#+END_SRC
+
+*** Common Causes
+
+| Cause | Diagnostic | Solution |
+|-------+------------+----------|
+| Server offline | Ping fails | Restart Immich server |
+| Network issue | Ping works, HTTP fails | Check firewall rules |
+| WiFi sleep | Intermittent | Use wired connection |
+| VPN interference | Works without VPN | Configure VPN split tunnel |
+| Port blocked | Specific port fails | Check firewall, try different port |
+
+** Error: "ECONNREFUSED"
+
+*** Symptom
+
+#+BEGIN_SRC
+Error: connect ECONNREFUSED 10.205.16.244:2283
+#+END_SRC
+
+*** Cause
+
+Server is reachable but not accepting connections on the specified port.
+
+*** Solutions
+
+1. *Verify server is running*:
+
+#+BEGIN_SRC bash
+# Check if Immich containers are running
+docker ps | grep immich
+
+# Restart if needed
+cd /path/to/immich
+docker-compose restart
+#+END_SRC
+
+2. *Check correct port*:
+
+#+BEGIN_SRC bash
+# List ports Immich is listening on
+docker ps | grep immich
+netstat -tuln | grep 2283
+#+END_SRC
+
+3. *Test different endpoints*:
+
+#+BEGIN_SRC bash
+curl http://10.205.16.244:2283/api/server/ping
+curl http://10.205.16.244:3001/api/server/ping
+#+END_SRC
+
+* API Endpoint Issues
+
+** Error: "404 Not Found" on Base URL
+
+*** Symptom
+
+#+BEGIN_SRC
+$ curl -I http://10.205.16.244:2283
+HTTP/1.1 404 Not Found
+X-Powered-By: Express
+#+END_SRC
+
+But the server IS running!
+
+*** Explanation
+
+This is actually *normal*. The base URL returns 404, but the API endpoints work fine.
+
+*** Verification
+
+Test the actual API endpoint:
+
+#+BEGIN_SRC bash
+# This should work
+curl http://10.205.16.244:2283/api/server/ping
+
+# Expected response
+{"res":"pong"}
+#+END_SRC
+
+If you get ={"res":"pong"}=, the server is working correctly.
+
+*** Next Steps
+
+Proceed with CLI login using the base URL:
+
+#+BEGIN_SRC bash
+immich login http://10.205.16.244:2283 your-api-key
+#+END_SRC
+
+The CLI knows to append =/api= paths automatically.
+
+* Upload Issues
+
+** Uploads Are Very Slow
+
+*** Diagnosis
+
+Check upload speed:
+
+#+BEGIN_SRC bash
+immich upload test-folder --concurrent 1 --recursive
+# Note the MB/s shown
+#+END_SRC
+
+*** Solutions
+
+**** Increase Concurrency
+
+#+BEGIN_SRC bash
+# Default is often too low
+immich upload Photos --recursive --concurrent 10
+
+# Experiment with different values
+# Start low, increase until speed stops improving
+#+END_SRC
+
+**** Use Wired Connection
+
+WiFi can be unreliable for large uploads:
+- Switch to wired Ethernet
+- Or move closer to WiFi router
+- Check for interference
+
+**** Check Server Resources
+
+On the Immich server:
+
+#+BEGIN_SRC bash
+# Check CPU and memory usage
+docker stats
+
+# Check disk I/O
+iostat -x 1
+
+# Check available disk space
+df -h
+#+END_SRC
+
+** Duplicate Files Being Uploaded
+
+*** Symptom
+
+Files that already exist in Immich are being uploaded again.
+
+*** Solution
+
+Use the skip duplicates flag:
+
+#+BEGIN_SRC bash
+immich upload Photos --recursive --skip-duplicate-assets
+#+END_SRC
+
+This checks before uploading and skips files already in Immich.
+
+** Upload Interrupted
+
+*** Symptom
+
+Upload stopped due to network issue, computer sleep, or interruption.
+
+*** Solution
+
+Simply run the same upload command again:
+
+#+BEGIN_SRC bash
+immich upload Photos --recursive --skip-duplicate-assets
+#+END_SRC
+
+The CLI automatically:
+- Checks which files are already uploaded
+- Skips those files
+- Resumes with remaining files
+
+* Authentication Token Issues
+
+** API Key Invalid
+
+*** Symptom
+
+#+BEGIN_SRC
+Authentication failed: Invalid API key
+#+END_SRC
+
+*** Solutions
+
+1. *Generate new API key*:
+   - Web interface → Account Settings → API Keys
+   - Create new key
+   - Use the new key
+
+2. *Verify key is complete*:
+   - API keys are long strings
+   - Ensure no spaces or truncation
+   - Copy the entire key
+
+3. *Check key hasn't expired*:
+   - Some installations have key expiration
+   - Generate new key if needed
+
+* Version Compatibility Issues
+
+** CLI Version Mismatch
+
+*** Symptom
+
+#+BEGIN_SRC
+Error: API version mismatch
+#+END_SRC
+
+### Solution
+
+Update CLI to match server version:
+
+#+BEGIN_SRC bash
+# Update to latest
+npm update -g @immich/cli
+
+# Or install specific version
+npm install -g @immich/cli@2.2.79
+
+# Check version
+immich --version
+#+END_SRC
+
+* Debugging Techniques
+
+** Enable Verbose Output
+
+#+BEGIN_SRC bash
+# Set debug environment variable
+DEBUG=* immich upload Photos --recursive
+
+# Or use Node.js debugging
+NODE_DEBUG=net,http immich upload Photos --recursive
+#+END_SRC
+
+** Check Immich Server Logs
+
+On the server:
+
+#+BEGIN_SRC bash
+# View real-time logs
+docker logs -f immich_server
+
+# Search for errors
+docker logs immich_server | grep -i error
+
+# View last 100 lines
+docker logs --tail 100 immich_server
+#+END_SRC
+
+** Test with Dry Run
+
+Preview what would be uploaded:
+
+#+BEGIN_SRC bash
+immich upload Photos --recursive --dry-run
+#+END_SRC
+
+This shows files that would be uploaded without actually uploading them.
+
+** Test API Directly with curl
+
+Bypass the CLI to test API:
+
+#+BEGIN_SRC bash
+# Test authentication
+curl -H "x-api-key: your-api-key" \
+  http://10.205.16.244:2283/api/user/me
+
+# Should return your user information
+#+END_SRC
+
+** Network Packet Capture
+
+For deep debugging:
+
+#+BEGIN_SRC bash
+# Capture traffic to Immich server (macOS)
+sudo tcpdump -i any host 10.205.16.244 and port 2283 -w capture.pcap
+
+# Run your immich command
+# Then analyze the capture file
+#+END_SRC
+
+* Configuration Verification Checklist
+
+When troubleshooting, verify:
+
+** Network Configuration
+
+- [ ] Server IP address is correct
+- [ ] Port number is correct
+- [ ] Server is reachable (ping works)
+- [ ] API endpoint responds (curl test)
+- [ ] No VPN interference
+- [ ] No firewall blocking
+
+** Authentication Configuration
+
+- [ ] API key is valid
+- [ ] API key is complete (no truncation)
+- [ ] Using correct login syntax
+- [ ] Environment variables set correctly
+
+** CLI Configuration
+
+- [ ] CLI is installed (=immich --version= works)
+- [ ] CLI is up to date
+- [ ] Node.js is installed and working
+- [ ] Correct upload path specified
+
+** Server Configuration
+
+- [ ] Immich server is running
+- [ ] Docker containers are healthy
+- [ ] Sufficient disk space
+- [ ] No errors in server logs
+
+* Quick Reference: Common Commands
+
+** Testing Connection
+
+#+BEGIN_SRC bash
+# Ping server
+curl http://server:2283/api/server/ping
+
+# Test API with authentication
+curl -H "x-api-key: YOUR_KEY" http://server:2283/api/user/me
+
+# Test CLI connection
+immich server-info
+#+END_SRC
+
+** Logging In
+
+#+BEGIN_SRC bash
+# Method 1: Direct
+immich login http://server:2283 api-key
+
+# Method 2: Environment variables
+export IMMICH_SERVER_URL=http://server:2283
+export IMMICH_API_KEY=api-key
+#+END_SRC
+
+** Uploading
+
+#+BEGIN_SRC bash
+# Basic upload
+immich upload Photos --recursive
+
+# With all recommended options
+immich upload Photos \
+  --recursive \
+  --skip-duplicate-assets \
+  --concurrent 5
+#+END_SRC
+
+* Related Topics
+
+- [[file:immich-cli-setup.org][Immich CLI Installation and Setup]]
+- [[file:immich-bulk-import-methods.org][Bulk Import Methods]]
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods]]
+
+* TODO Tasks
+
+- TODO Document proxy configuration for CLI
+- TODO Create automated health check scripts
+- TODO Document common network topology issues
+- TODO Create troubleshooting decision tree

@@ -1,0 +1,158 @@
+#+TITLE: Immich Bulk Import Methods
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich photo-management bulk-import file-transfer
+
+* Overview
+
+When importing hundreds of gigabytes of photos into Immich from a Mac computer, there are several methods available, each with different trade-offs for speed, reliability, and ease of use. This document covers all major import approaches and provides guidance on choosing the right method for your situation.
+
+* Import Methods Comparison
+
+** Immich CLI (Recommended for Large Imports)
+
+The Immich CLI tool is specifically designed for bulk imports and offers the best combination of reliability and features for large photo libraries.
+
+*** Advantages
+- Designed specifically for bulk imports
+- Resumes interrupted uploads automatically
+- Handles duplicate detection
+- Shows progress bars during transfer
+- Can skip already imported files
+- Supports concurrent uploads for faster transfer
+- Most reliable for multi-hundred GB transfers
+
+*** When to Use
+- First-time bulk imports of large photo libraries
+- When you need reliable resume capability
+- When importing from a remote location
+- When network reliability is a concern
+
+*** See Also
+- [[file:immich-cli-setup.org][Immich CLI Setup and Configuration]]
+- [[file:immich-cli-troubleshooting.org][Immich CLI Troubleshooting]]
+
+** Web Interface Upload
+
+The web interface provides a drag-and-drop upload feature suitable for smaller batches.
+
+*** Advantages
+- Simple graphical interface
+- No additional software installation required
+- Drag and drop entire folders
+- Good for ad-hoc uploads
+
+*** Limitations
+- May timeout with very large uploads
+- Less reliable for hundreds of gigabytes
+- No automatic resume on failure
+- Slower than CLI or direct transfer methods
+
+*** When to Use
+- Small to medium photo collections (< 50 GB)
+- One-time uploads of specific albums
+- When CLI installation is not possible
+- For users uncomfortable with command-line tools
+
+** Direct Server Access (Fastest)
+
+Copy files directly to the Immich server's storage location and trigger a library scan.
+
+*** Advantages
+- Bypasses network transfer entirely (if physically connected)
+- Fastest method when server is locally accessible
+- No upload time over network
+- Good for initial migration from local storage
+
+*** Requirements
+- Physical or network access to the server filesystem
+- Knowledge of the server's upload location
+- Proper file permissions configuration
+- Ability to trigger library scan
+
+*** When to Use
+- Server is on the same local network
+- You have SSH or file sharing access to the server
+- Initial migration from existing storage
+- Network bandwidth is limited
+
+*** See Also
+- [[file:immich-storage-locations.org][Immich Storage Locations and Configuration]]
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods for Immich]]
+
+** External Libraries (Alternative Approach)
+
+Set up an external library that points to a network-mounted folder, avoiding file copying entirely.
+
+*** Advantages
+- No file duplication
+- Preserves original folder structure
+- Files remain in their original location
+- Can access same files from multiple systems
+- No storage space duplication
+
+*** Limitations
+- Requires network mount configuration
+- Server must have continuous access to the mounted location
+- Network reliability affects access
+- May have slower access times than local storage
+
+*** When to Use
+- Storage space is limited
+- Want to maintain original folder organization
+- Multiple systems need access to the same files
+- Photos are already on network-attached storage (NAS)
+
+*** See Also
+- [[file:immich-external-libraries.org][Immich External Libraries Configuration]]
+- [[file:immich-file-organization.org][Immich File Organization Strategies]]
+
+* Decision Matrix
+
+| Method | Speed | Reliability | Ease of Use | Best For |
+|--------+-------+-------------+-------------+----------|
+| CLI | Medium | Excellent | Medium | Large bulk imports |
+| Web Interface | Slow | Good | Excellent | Small uploads |
+| Direct Server | Fastest | Good | Hard | Local migrations |
+| External Library | N/A | Medium | Hard | No duplication |
+
+* General Tips for Large Imports
+
+** Preparation
+- Organize photos into logical folders before importing
+- Verify Immich server has sufficient storage space
+- Test with a small subset first
+- Document your import approach for future reference
+
+** Network Considerations
+- Large uploads work best on reliable, fast connections
+- Consider time-of-day for network bandwidth availability
+- Wired connections are more reliable than WiFi
+- Monitor transfer speeds and adjust concurrency
+
+** Batch Processing
+- Consider importing in smaller batches (e.g., by year or event)
+- Makes the process more manageable
+- Easier to verify successful imports
+- Can pause between batches if needed
+
+** Monitoring
+- Check available storage space during import
+- Monitor server performance
+- Verify imports are completing successfully
+- Keep track of what has been imported
+
+* Related Topics
+
+- [[file:immich-cli-setup.org][Immich CLI Installation and Setup]]
+- [[file:immich-storage-locations.org][Immich Storage Locations]]
+- [[file:immich-file-organization.org][File Organization in Immich]]
+- [[file:immich-external-libraries.org][External Library Configuration]]
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods]]
+
+* TODO Tasks
+
+- TODO Test import performance with different concurrency settings
+- TODO Document optimal batch sizes for different network speeds
+- TODO Create automated scripts for common import scenarios
+- TODO Set up monitoring for long-running imports

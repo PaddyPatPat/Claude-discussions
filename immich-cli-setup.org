@@ -1,0 +1,278 @@
+#+TITLE: Immich CLI Installation and Setup
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: immich cli setup installation npm api authentication
+
+* Overview
+
+The Immich CLI is a command-line tool designed for bulk photo imports and management. This document covers installation, configuration, authentication, and usage of the Immich CLI for managing large photo libraries.
+
+* Prerequisites
+
+** Node.js and npm Installation
+
+The Immich CLI requires Node.js and npm to be installed on your system.
+
+*** On macOS (using Homebrew)
+
+#+BEGIN_SRC bash
+brew install node
+#+END_SRC
+
+*** Verify Installation
+
+#+BEGIN_SRC bash
+node --version
+npm --version
+#+END_SRC
+
+* Installation
+
+** Install Immich CLI Globally
+
+#+BEGIN_SRC bash
+npm install -g @immich/cli
+#+END_SRC
+
+** Verify Installation
+
+#+BEGIN_SRC bash
+immich --version
+#+END_SRC
+
+** Updating the CLI
+
+Keep the CLI updated to ensure compatibility with your Immich server:
+
+#+BEGIN_SRC bash
+npm update -g @immich/cli
+#+END_SRC
+
+* Authentication Setup
+
+** Step 1: Create an API Key
+
+1. Open your Immich web interface in a browser
+2. Click on your profile picture (top right)
+3. Navigate to *Account Settings*
+4. Go to *API Keys* section
+5. Click *New API Key*
+6. Give it a descriptive name (e.g., "Mac Import CLI")
+7. Copy the generated API key immediately
+8. Store it securely (you won't be able to see it again)
+
+** Step 2: Authenticate the CLI
+
+There are multiple methods to authenticate:
+
+*** Method 1: Direct Login with API Key
+
+#+BEGIN_SRC bash
+immich login http://your-immich-server-url your-api-key-here
+#+END_SRC
+
+Example:
+#+BEGIN_SRC bash
+immich login http://10.205.16.244:2283 abcd1234-your-api-key-here
+#+END_SRC
+
+*** Method 2: Using the --key Flag
+
+#+BEGIN_SRC bash
+immich login http://your-immich-server-url --key your-api-key-here
+#+END_SRC
+
+*** Method 3: Environment Variables (Recommended)
+
+Set environment variables to avoid typing credentials repeatedly:
+
+#+BEGIN_SRC bash
+export IMMICH_SERVER_URL=http://your-immich-server-url
+export IMMICH_API_KEY=your-api-key-here
+#+END_SRC
+
+For permanent configuration, add these to your shell profile (~/.bashrc, ~/.zshrc, etc.):
+
+#+BEGIN_SRC bash
+echo 'export IMMICH_SERVER_URL=http://10.205.16.244:2283' >> ~/.zshrc
+echo 'export IMMICH_API_KEY=your-api-key-here' >> ~/.zshrc
+source ~/.zshrc
+#+END_SRC
+
+*** Method 4: Skip Login and Use Environment Variables
+
+With environment variables set, you can skip the login step entirely:
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive
+#+END_SRC
+
+* Usage
+
+** Test Connection
+
+Verify your setup works before uploading:
+
+#+BEGIN_SRC bash
+immich server-info
+#+END_SRC
+
+This should return information about your Immich server.
+
+** Basic Upload
+
+Upload a directory recursively:
+
+#+BEGIN_SRC bash
+immich upload /path/to/your/photos --recursive
+#+END_SRC
+
+** Upload with Options
+
+*** Skip Duplicate Assets
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive --skip-duplicate-assets
+#+END_SRC
+
+*** Concurrent Uploads
+
+Adjust the number of concurrent uploads (default is often too conservative):
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive --concurrent 5
+#+END_SRC
+
+Adjust the number based on:
+- Your network bandwidth
+- Server capacity
+- Number of files
+
+*** Delete After Upload (Use with Caution!)
+
+Remove local files after successful upload:
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive --delete
+#+END_SRC
+
+*WARNING*: This permanently deletes local files. Only use when you're certain the uploads succeeded.
+
+*** Dry Run
+
+Preview what would be uploaded without actually uploading:
+
+#+BEGIN_SRC bash
+immich upload /path/to/photos --recursive --dry-run
+#+END_SRC
+
+** Complete Example
+
+A comprehensive upload command for large libraries:
+
+#+BEGIN_SRC bash
+immich upload ~/Photos \
+  --recursive \
+  --skip-duplicate-assets \
+  --concurrent 5 \
+  --server http://10.205.16.244:2283 \
+  --key your-api-key
+#+END_SRC
+
+* Command Reference
+
+** Available Commands
+
+| Command | Description |
+|---------+-------------|
+| =immich login= | Authenticate with Immich server |
+| =immich upload= | Upload photos to Immich |
+| =immich server-info= | Display server information |
+| =immich --version= | Show CLI version |
+| =immich --help= | Display help information |
+
+** Common Options
+
+| Option | Description |
+|--------+-------------|
+| =--recursive= | Include all subdirectories |
+| =--skip-duplicate-assets= | Skip files already in Immich |
+| =--concurrent N= | Upload N files simultaneously |
+| =--delete= | Delete local files after upload |
+| =--dry-run= | Preview without uploading |
+| =--server URL= | Specify server URL |
+| =--key KEY= | Specify API key |
+
+* Best Practices
+
+** Before Importing
+
+1. *Test with a small directory first*
+   - Use --dry-run to preview
+   - Upload a test folder to verify settings
+   - Check that files appear correctly in Immich
+
+2. *Verify server space*
+   - Check available storage on Immich server
+   - Ensure at least 20% free space buffer
+
+3. *Check network stability*
+   - Wired connections are more reliable than WiFi
+   - Consider time-of-day for bandwidth availability
+   - Test upload speeds with a small batch
+
+** During Import
+
+1. *Monitor progress*
+   - CLI shows progress bars for each file
+   - Watch for error messages
+   - Check server disk space periodically
+
+2. *Resume on interruption*
+   - If interrupted, simply run the same command again
+   - CLI automatically skips already uploaded files
+   - Use --skip-duplicate-assets to ensure no duplicates
+
+3. *Adjust concurrency based on performance*
+   - Start with --concurrent 3
+   - Increase if network is underutilized
+   - Decrease if seeing timeouts or errors
+
+** After Import
+
+1. *Verify in web interface*
+   - Check that photos appear in Immich
+   - Verify metadata is preserved
+   - Test that photos can be viewed
+
+2. *Don't delete originals immediately*
+   - Keep originals until you've verified the import
+   - Test downloading photos from Immich
+   - Verify backup strategies are in place
+
+* Troubleshooting
+
+Common issues and quick solutions:
+
+| Issue | Solution |
+|-------+----------|
+| "missing required argument 'key'" | Use newer syntax: =immich login URL KEY= |
+| "fetch failed" error | Check server URL and port, verify network |
+| Uploads are slow | Increase --concurrent value |
+| Duplicate uploads | Use --skip-duplicate-assets |
+| CLI version mismatch | Run =npm update -g @immich/cli= |
+
+For detailed troubleshooting, see [[file:immich-cli-troubleshooting.org][Immich CLI Troubleshooting]].
+
+* Related Topics
+
+- [[file:immich-bulk-import-methods.org][Immich Bulk Import Methods Overview]]
+- [[file:immich-cli-troubleshooting.org][CLI Troubleshooting Guide]]
+- [[file:immich-file-organization.org][File Organization in Immich]]
+
+* TODO Tasks
+
+- TODO Test optimal concurrent upload values for different network speeds
+- TODO Create shell script wrapper for common import scenarios
+- TODO Document backup verification procedures
+- TODO Set up monitoring for long-running imports

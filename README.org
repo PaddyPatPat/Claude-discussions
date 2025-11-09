@@ -6,10 +6,28 @@
 * Overview
 
 This repository contains documentation from Claude conversations covering:
+- Immich photo management and bulk import strategies
 - Ray distributed computing for home lab environments
 - Proxmox containerization strategies with open-source solutions
 
 * Quick Navigation
+
+** Immich Photo Management
+
+Complete guide to importing and managing large photo collections with Immich.
+
+*** Import and Migration
+- [[file:immich-bulk-import-methods.org][Immich Bulk Import Methods]] - Overview of different import approaches
+- [[file:immich-cli-setup.org][Immich CLI Setup and Configuration]] - Installing and using the CLI tool
+- [[file:immich-network-transfer-methods.org][Network Transfer Methods]] - SCP, rsync, SMB, NFS, and other transfer options
+
+*** Storage and Organization
+- [[file:immich-storage-locations.org][Immich Storage Locations]] - Finding and configuring Docker storage volumes
+- [[file:immich-file-organization.org][File Organization Strategies]] - How Immich organizes files vs folder structure
+- [[file:immich-external-libraries.org][External Libraries Configuration]] - Preserving folder structure without duplication
+
+*** Troubleshooting
+- [[file:immich-cli-troubleshooting.org][CLI Troubleshooting Guide]] - Common errors and solutions
 
 ** Ray Distributed Computing
 
@@ -70,6 +88,18 @@ System vs   Podman vs   OCI     LXC vs VM    Privileged
 
 * Files in This Repository
 
+** Immich Photo Management
+
+| File | Description |
+|------+-------------|
+| [[file:immich-bulk-import-methods.org][immich-bulk-import-methods.org]] | Import method comparison and recommendations |
+| [[file:immich-cli-setup.org][immich-cli-setup.org]] | CLI installation, authentication, and usage |
+| [[file:immich-cli-troubleshooting.org][immich-cli-troubleshooting.org]] | Common errors and network troubleshooting |
+| [[file:immich-storage-locations.org][immich-storage-locations.org]] | Docker storage configuration |
+| [[file:immich-file-organization.org][immich-file-organization.org]] | File organization strategies |
+| [[file:immich-external-libraries.org][immich-external-libraries.org]] | External library setup and configuration |
+| [[file:immich-network-transfer-methods.org][immich-network-transfer-methods.org]] | Alternative file transfer methods |
+
 ** Ray Distributed Computing
 
 | File | Description |
@@ -96,6 +126,17 @@ System vs   Podman vs   OCI     LXC vs VM    Privileged
 | [[file:high-availability-setup.org][high-availability-setup.org]] | HA across multiple hosts |
 
 * Key Topics Covered
+
+** Immich Photo Management
+
+- Bulk import strategies for hundreds of gigabytes
+- CLI vs web vs direct server access methods
+- Network troubleshooting (API errors, EHOSTDOWN, fetch failures)
+- Docker storage configuration and volume mapping
+- File organization (Immich's structure vs folder preservation)
+- External libraries for maintaining original folder structure
+- SMB, NFS, SCP, rsync transfer methods
+- Permission management and library scanning
 
 ** Ray Distributed Computing
 
@@ -155,6 +196,22 @@ System vs   Podman vs   OCI     LXC vs VM    Privileged
 
 * Common Questions Answered
 
+** Immich Questions
+
+*** How do I import hundreds of gigabytes of photos?
+See [[file:immich-bulk-import-methods.org][Bulk Import Methods]] - covers CLI, direct server access, and external libraries.
+
+*** Why is Immich CLI failing with "fetch failed" errors?
+See [[file:immich-cli-troubleshooting.org][CLI Troubleshooting]] - comprehensive network debugging guide.
+
+*** Will Immich preserve my folder structure?
+See [[file:immich-file-organization.org][File Organization]] - explains Immich's reorganization and external library alternatives.
+
+*** What if rsync isn't available?
+See [[file:immich-network-transfer-methods.org][Network Transfer Methods]] - covers SCP, SFTP, SMB, NFS alternatives.
+
+** Proxmox Questions
+
 ** Why Podman over Docker?
 
 See [[file:podman-vs-docker.org][Podman vs Docker]] - covers rootless design, no daemon, pod support, and open-source compliance.
@@ -181,6 +238,15 @@ See [[file:high-availability-setup.org][High Availability Setup]] - multi-host c
 
 * Recommended Reading Paths
 
+** Immich Photo Management Path
+
+For someone importing photos into Immich:
+
+1. Read [[file:immich-bulk-import-methods.org][Bulk Import Methods]] to understand your options
+2. Follow [[file:immich-cli-setup.org][CLI Setup]] to install and configure the CLI
+3. If you encounter issues, consult [[file:immich-cli-troubleshooting.org][Troubleshooting Guide]]
+4. For preserving folder structure, see [[file:immich-external-libraries.org][External Libraries]]
+
 ** Ray Distributed Computing Path
 
 For someone setting up Ray in a home lab:
@@ -206,6 +272,15 @@ For someone new to Proxmox containers:
 7. If needed, study [[file:high-availability-setup.org][High Availability]]
 
 * TODO Items
+
+** Immich Tasks
+
+*** TODO Test import performance with different concurrency settings
+*** TODO Document optimal batch sizes for different network speeds
+*** TODO Create automated scripts for common import scenarios
+*** TODO Set up monitoring for long-running imports
+*** TODO Document storage requirements for different collection sizes
+*** TODO Create backup automation scripts
 
 ** Ray Deployment Tasks
 
@@ -261,7 +336,8 @@ Feel free to expand these documents as you implement and learn from real-world e
 
 * Cross-Topic Integration
 
-Ray and Proxmox documentation are interconnected:
+Documentation topics are interconnected:
 - [[file:ray-proxmox-gpu-passthrough.org][Ray Proxmox GPU Passthrough]] references [[file:proxmox-containers-overview.org][Proxmox Containers]]
 - GPU passthrough concepts apply to both container and Ray VM deployments
 - High availability patterns from [[file:high-availability-setup.org][HA Setup]] can inform Ray cluster design
+- Network transfer methods from [[file:immich-network-transfer-methods.org][Immich documentation]] apply to other large data transfers
