@@ -1,0 +1,455 @@
+#+TITLE: TrueNAS NFS Integration with Proxmox
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: truenas proxmox nfs storage networking
+
+* Overview
+
+This guide provides step-by-step instructions for integrating TrueNAS NFS shares with Proxmox VE. NFS is often the simplest and most flexible option for sharing TrueNAS storage with Proxmox VMs and containers.
+
+* Why Choose NFS
+
+NFS is recommended when you need:
+
+- Simple setup and configuration
+- Storage for ISOs, backups, and templates
+- Shared access from multiple VMs
+- Easy management and troubleshooting
+- File-level storage operations
+
+* Prerequisites
+
+Before starting, ensure:
+
+- TrueNAS VM is running in Proxmox
+- TrueNAS has network connectivity
+- You know the TrueNAS VM's IP address
+- You have a ZFS pool/dataset ready in TrueNAS
+- Adequate space available (following the 80% rule - see [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management]])
+
+* Step 1: Create NFS Share in TrueNAS
+
+** 1.1 Navigate to NFS Shares
+
+In TrueNAS web interface:
+1. Click on *Sharing*
+2. Select *Unix (NFS) Shares*
+3. Click *Add*
+
+** 1.2 Configure Basic Share Settings
+
+***Path***
+- Choose or create a dataset path
+- Example: =/mnt/yourpool/proxmox-storage=
+- Click "Create Dataset" if needed
+
+***Description***
+- Provide meaningful description
+- Example: "Proxmox Storage"
+
+***Comment***
+- Optional additional notes
+
+** 1.3 Configure Access Control
+
+***Networks***
+
+Two options:
+
+1. *Leave blank* - Allows all networks (simpler, less secure)
+2. *Specify network* - Restrict to Proxmox network
+   - Example: =192.168.1.0/24=
+   - More secure for production
+
+***Hosts***
+
+Two options:
+
+1. *Leave blank* - Allows all hosts
+2. *Specify IP* - Restrict to Proxmox host IP
+   - Example: =192.168.1.100=
+   - Most secure option
+
+**Recommendation:** For initial setup, leave both blank. Restrict later once working.
+
+** 1.4 Configure Permissions (Critical)
+
+***Maproot User***
+- Set to *root*
+- Essential for Proxmox compatibility
+- Allows Proxmox to manage files properly
+
+***Maproot Group***
+- Set to *root*
+- Matches user setting
+
+***Mapall User/Group***
+- Usually leave blank when using Maproot
+
+** 1.5 Advanced Options
+
+***All directories***
+- Check this box to allow subdirectory mounting
+- Enables more flexible storage organization
+
+***Quiet***
+- Uncheck for better error reporting
+- Helps with troubleshooting
+
+***Read Only***
+- Leave unchecked for Proxmox storage
+- Proxmox needs write access
+
+** 1.6 Save Configuration
+
+Click *Save* to create the NFS share.
+
+* Step 2: Enable and Configure NFS Service
+
+** 2.1 Enable NFS Service
+
+1. Go to *Services* in TrueNAS
+2. Find *NFS* service
+3. Toggle to *ON* if not running
+4. Check *Start Automatically*
+
+** 2.2 Configure NFS Service Settings
+
+Click the gear/settings icon for NFS service:
+
+***Number of Servers***
+- Set to 4-8 depending on expected load
+- More servers = better concurrent client handling
+
+***Enable NFSv4***
+- Check this box (recommended)
+- Better performance and features than NFSv3
+- More secure
+
+***NFSv3 Ownership Model for NFSv4***
+- Check this box for better compatibility
+- Helps with Proxmox UID/GID handling
+
+***Bind IP Addresses***
+- Leave blank for all interfaces
+- Or select specific interface for storage network
+
+** 2.3 Verify Service Status
+
+Ensure NFS service shows as *Running* in Services list.
+
+* Step 3: Add NFS Storage to Proxmox
+
+** 3.1 Access Proxmox Datacenter Storage
+
+In Proxmox web interface:
+1. Click on *Datacenter*
+2. Click *Storage*
+3. Click *Add* button
+4. Select *NFS* from dropdown
+
+** 3.2 Configure NFS Storage
+
+***ID***
+- Unique identifier for this storage
+- Example: =truenas-nfs= or =truenas-main=
+- Use alphanumeric and hyphens only
+
+***Server***
+- Enter TrueNAS VM's IP address
+- Example: =192.168.1.50=
+- Must be reachable from Proxmox host
+
+***Export***
+- Enter the NFS export path from TrueNAS
+- Example: =/mnt/yourpool/proxmox-storage=
+- Must match path configured in TrueNAS share
+
+***Content***
+- Select types of content to store
+- Common selections:
+  - ☑ Disk image (VM disks)
+  - ☑ VZDump backup file (backups)
+  - ☑ ISO image (installation media)
+  - ☑ Container template
+  - ☑ Snippets (cloud-init configs)
+
+***Nodes***
+- Leave as "All" for shared storage
+- Or select specific node if needed
+
+***Enable***
+- Check to enable storage immediately
+
+***Max Backups***
+- Optional: limit number of backups
+- Leave blank for no limit
+
+** 3.3 Advanced Options
+
+***Preallocation Mode***
+- Default: metadata
+- Options: off, metadata, falloc, full
+- *metadata* is good balance of performance/space
+
+***NFS Version***
+- Auto-detected usually
+- Can force specific version if needed
+
+** 3.4 Save Configuration
+
+Click *Add* to create the storage entry.
+
+* Step 4: Verify and Test
+
+** 4.1 Check Storage Visibility
+
+In Proxmox:
+- Navigate to Datacenter → Storage
+- Verify new storage appears in list
+- Check that status shows as *Active*
+- Verify space usage displays correctly
+
+** 4.2 Test Storage Access
+
+***Via Web Interface***
+1. Click on the storage name
+2. Click *Content* tab
+3. Try uploading a small ISO or file
+4. Verify upload succeeds
+
+***Via Command Line (on Proxmox host)***
+
+#+BEGIN_SRC bash
+# Check if mount point exists
+ls -la /mnt/pve/truenas-nfs
+
+# Verify NFS mount
+mount | grep truenas
+
+# Test write access
+touch /mnt/pve/truenas-nfs/test.txt
+ls -la /mnt/pve/truenas-nfs/test.txt
+rm /mnt/pve/truenas-nfs/test.txt
+#+END_SRC
+
+** 4.3 Test VM Disk Creation
+
+1. Create a new VM or edit existing
+2. Add a new hard disk
+3. Select your NFS storage from storage dropdown
+4. Verify disk creates successfully
+
+* Troubleshooting Common Issues
+
+** Storage Shows Zero Bytes
+
+***Possible Causes***
+- NFS service not running on TrueNAS
+- Network connectivity issues
+- Incorrect export path
+- Permission problems
+
+***Solutions***
+1. Verify NFS service is running in TrueNAS
+2. Test network connectivity: =ping <truenas-ip>=
+3. Check export path matches exactly
+4. Verify Maproot is set to root
+
+** Permission Denied Errors
+
+***Solutions***
+- Check Maproot User/Group set to root
+- Verify network/host restrictions in TrueNAS
+- Check dataset permissions in TrueNAS
+
+** Cannot Mount Share
+
+***Check From Proxmox Host***
+
+#+BEGIN_SRC bash
+# Test manual mount
+showmount -e <truenas-ip>
+
+# Should show your export
+# If not, NFS service or share config issue
+
+# Try manual mount
+mount -t nfs <truenas-ip>:/mnt/pool/path /mnt/test
+#+END_SRC
+
+** Slow Performance
+
+***Optimization Steps***
+1. Ensure VirtIO network adapter on TrueNAS VM
+2. Check network path (avoid multiple hops)
+3. Verify TrueNAS has adequate RAM for caching
+4. Consider dedicated storage network
+5. Enable jumbo frames if supported
+
+* Performance Optimization
+
+** Network Configuration
+
+***VirtIO Network Adapter***
+Ensure TrueNAS VM uses VirtIO (not e1000):
+- Better performance than emulated adapters
+- Lower CPU overhead
+- Higher throughput
+
+***MTU Settings***
+Consider jumbo frames for better performance:
+- Set MTU to 9000 on all storage interfaces
+- Must be consistent across entire network path
+- Requires switch support
+
+** TrueNAS Resource Allocation
+
+***RAM***
+- ZFS benefits from RAM for ARC cache
+- Recommend 16GB+ for active NFS server
+- More RAM = better cache hit rates
+
+***CPU***
+- Allocate 4+ cores for busy storage server
+- Enable CPU type "host" for better performance
+
+** Storage Pool Configuration
+
+- Use mirror or RAIDZ vdevs appropriately
+- Don't exceed 80% capacity (see [[file:zfs-capacity-management-best-practices.org][capacity management]])
+- Regular scrubs to maintain integrity
+
+* Security Best Practices
+
+** Network Restrictions
+
+After confirming connectivity, restrict access:
+
+1. In TrueNAS NFS share settings
+2. Set *Networks* to Proxmox network range
+3. Or set *Hosts* to specific Proxmox IP
+4. Apply changes and restart NFS service
+
+** Firewall Configuration
+
+***On TrueNAS***
+If firewall enabled, allow:
+- Port 2049 TCP/UDP (NFSv4)
+- Port 111 TCP/UDP (portmapper)
+- Ports 32765-32768 TCP/UDP (NFSv3 if used)
+
+***On Proxmox***
+Default configuration usually permits NFS client connections.
+
+** NFSv4 with Kerberos (Advanced)
+
+For production environments:
+- Configure Kerberos authentication
+- Provides encryption and stronger authentication
+- More complex setup but better security
+
+* NFS Version Considerations
+
+** NFSv4 (Recommended)
+
+***Advantages***
+- Single port (2049) simplifies firewall
+- Better performance
+- Improved security features
+- Stateful protocol
+
+***Considerations***
+- Requires proper DNS or hosts file
+- ID mapping can be complex
+
+** NFSv3 (Legacy)
+
+***Advantages***
+- Simpler setup
+- Broader compatibility
+- Stateless protocol
+
+***Disadvantages***
+- Multiple ports needed
+- No built-in security
+- Generally slower
+
+* Common Use Cases
+
+** ISO Storage
+
+Perfect for NFS:
+1. Create NFS storage in Proxmox
+2. Select "ISO image" as content type
+3. Upload ISOs via Proxmox interface
+4. Available to all VMs for installation
+
+** Backup Storage
+
+Excellent for VZDump backups:
+1. Enable "VZDump backup file" content type
+2. Configure backup jobs to use NFS storage
+3. Centralized backup location
+4. Easy to replicate or snapshot in TrueNAS
+
+** Container Templates
+
+Convenient for LXC:
+1. Enable "Container template" content type
+2. Download templates to NFS storage
+3. Available for creating containers
+
+** VM Disk Storage
+
+Works well for:
+- Low to moderate I/O workloads
+- Development/testing environments
+- File servers
+- Web servers
+
+Not ideal for:
+- High I/O databases (consider iSCSI)
+- Latency-sensitive applications
+
+* Monitoring and Maintenance
+
+** Check NFS Statistics
+
+***In TrueNAS***
+- Monitor storage pool capacity
+- Watch for error messages in logs
+- Regular scrubs (monthly recommended)
+
+***In Proxmox***
+#+BEGIN_SRC bash
+# Check NFS mount stats
+nfsstat -m
+
+# Monitor mount points
+df -h | grep truenas
+
+# Check NFS client stats
+nfsstat -c
+#+END_SRC
+
+** Regular Tasks
+
+- Weekly: Check storage usage
+- Monthly: Run ZFS scrub on TrueNAS
+- Quarterly: Review and test backups
+- Annually: Review performance and capacity planning
+
+* Related Topics
+
+- [[file:truenas-proxmox-storage-overview.org][TrueNAS-Proxmox Storage Integration Overview]]
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration (Alternative)]]
+- [[file:truenas-proxmox-networking.org][Network Configuration Options]]
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]]
+
+* TODO Tasks
+
+- TODO Document NFSv4 with Kerberos configuration
+- TODO Create performance benchmarking guide
+- TODO Add examples of backup job configuration
+- TODO Document migration from local storage to NFS

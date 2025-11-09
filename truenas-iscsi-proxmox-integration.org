@@ -1,0 +1,695 @@
+#+TITLE: TrueNAS iSCSI Integration with Proxmox
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: truenas proxmox iscsi storage blockdevice
+
+* Overview
+
+This guide covers integrating TrueNAS iSCSI targets with Proxmox VE for high-performance block storage. iSCSI is more complex than NFS but offers better performance for VM disk storage and applications requiring block-level access.
+
+*Note:* Due to complexity, consider [[file:truenas-nfs-proxmox-integration.org][NFS]] for simpler use cases like backups and ISOs.
+
+* Why Choose iSCSI
+
+iSCSI is recommended when you need:
+
+- High-performance VM disk storage
+- Block-level storage access
+- Lower latency than NFS
+- Storage for databases or I/O intensive applications
+- Dedicated storage per VM/application
+
+* Prerequisites
+
+Before starting:
+
+- TrueNAS VM running in Proxmox
+- Network connectivity established
+- ZFS pool created with adequate space
+- Understanding of storage capacity management (see [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management]])
+- Understanding of provisioning types (see [[file:zfs-storage-provisioning.org][ZFS Provisioning Types]])
+
+* iSCSI Terminology
+
+Understanding these terms is essential:
+
+***Target***
+- The storage server (TrueNAS) offering storage
+- Identified by IQN (iSCSI Qualified Name)
+- Example: =iqn.2005-10.org.freenas.ctl:target0=
+
+***Initiator***
+- The storage client (Proxmox host) connecting to storage
+- Also identified by IQN
+- Example: =iqn.1993-08.org.debian:01:proxmox=
+
+***Portal***
+- The IP address and port where target is accessible
+- Usually IP:3260 (standard iSCSI port)
+
+***Extent***
+- The actual storage space allocated
+- Can be device (zvol) or file-based
+- What the initiator sees as a disk
+
+***LUN*** (Logical Unit Number)
+- Maps extent to target
+- Usually LUN 0 for single-extent targets
+
+* Step 1: Create iSCSI Configuration in TrueNAS
+
+TrueNAS offers two ways to configure iSCSI:
+
+** Option A: Using the Wizard (Recommended for Beginners)
+
+*** 1.1 Start Wizard
+
+1. Go to *Sharing* → *Block Shares (iSCSI)*
+2. Click *Wizard* button
+3. Follow wizard steps
+
+*** 1.2 Block Device Name
+
+- Enter a descriptive name
+- Example: =proxmox-storage=
+- This becomes part of the extent name
+
+*** 1.3 Extent Type
+
+Choose *Device* (recommended for Proxmox):
+
+***Device***
+- Uses ZFS zvol (volume)
+- Better performance
+- Native block storage
+- Recommended for VM disks
+
+***File***
+- Uses file on ZFS dataset
+- More flexible
+- Slightly lower performance
+
+**Recommendation:** Use *Device* for Proxmox VM storage
+
+*** 1.4 Sharing Platform
+
+Do NOT select "VMware" preset for Proxmox.
+
+Choose one of:
+- *Generic* or *Modern OS* (if available)
+- *Manual configuration* with these settings:
+
+| Setting | Value | Reason |
+|---------+-------+--------|
+| Block size | 4K | Modern drives use 4K native sectors |
+| TPC | Enabled | Efficient data operations |
+| Xen compatibility | Disabled | Proxmox uses KVM, not Xen |
+| SSD speed | Enable if SSDs | Enables TRIM/discard commands |
+
+**Important:** Xen compatibility mode can cause issues with KVM/QEMU.
+
+*** 1.5 Portal Configuration
+
+****Portal IP Address****
+
+Options:
+
+1. *0.0.0.0* (All IPv4 interfaces) - Recommended
+   - Binds to all network interfaces
+   - Most flexible
+   - Simple for initial setup
+
+2. *Specific IP* (TrueNAS VM's primary IP)
+   - Use if single interface
+   - Example: =192.168.1.50=
+   - More explicit control
+
+3. *::* (All IPv6 interfaces)
+   - For IPv6-primary networks
+   - May also accept IPv4 (dual-stack)
+
+**Recommendation:** Use =0.0.0.0= for IPv4 compatibility and flexibility.
+
+****IPv4 and IPv6 Dual-Stack****
+
+If you have both IPv4 and IPv6:
+- Start with =0.0.0.0= for IPv4
+- Proxmox typically uses IPv4 for iSCSI by default
+- Add IPv6 portal later only if specifically needed
+- Can create multiple portals for both protocols
+
+****Port****
+- Default: 3260
+- Usually no need to change
+
+*** 1.6 Initiator Configuration
+
+Choose access control level:
+
+****Option 1: Allow All Initiators****
+- Simplest for initial setup
+- Less secure
+- Any host can discover target
+- Good for testing
+
+****Option 2: Specific Initiator****
+- More secure
+- Requires Proxmox initiator IQN
+- Recommended for production
+
+To find Proxmox initiator IQN:
+#+BEGIN_SRC bash
+# On Proxmox host
+cat /etc/iscsi/initiatorname.iscsi
+#+END_SRC
+
+*** 1.7 Authentication (CHAP)
+
+****CHAP Authentication****
+- Optional but recommended for security
+- Provides password authentication
+- Configure if security is important
+
+**For production:** Enable CHAP authentication
+
+**For testing:** Can skip initially
+
+*** 1.8 Extent Size
+
+Critical configuration - see [[file:zfs-capacity-management-best-practices.org][capacity management]].
+
+****Important Considerations****
+
+1. *80% Rule*: Don't use more than 80% of pool capacity
+2. *Units*: Must enter whole numbers (no decimals)
+3. *Unit types*: GiB, GB, TiB, TB
+
+****Size Calculation Example****
+
+For 3.5 TiB pool:
+- 80% of 3.5 TiB = 2.8 TiB
+- In whole GiB: 2867 GiB
+- In GB: 3085 GB
+- Recommended: 2800 GiB (leaves buffer)
+
+****Size Entry Format****
+
+Valid formats:
+- =2800= (defaults to GiB usually)
+- =2800GiB=
+- =3000GB=
+- =2.5TiB= → Enter as =2560GiB= (convert to whole GiB)
+
+Invalid formats:
+- =2.8TiB= (decimal - will error)
+- =2800.5GiB= (decimal - will error)
+
+*** 1.9 Thin vs Thick Provisioning
+
+****Thin Provisioning (Sparse)****
+- Space allocated as data written
+- Can oversubscribe
+- More flexible
+- **Look for "Sparse" checkbox**
+
+****Thick Provisioning****
+- Full space reserved immediately
+- More predictable
+- Less flexible
+
+**Recommendation:** Use thin provisioning unless you have specific reasons for thick.
+
+*** 1.10 Complete Wizard
+
+- Review all settings
+- Click *Submit*
+- Wizard creates portal, initiator, target, and extent
+
+** Option B: Manual Configuration (Advanced)
+
+For experienced users wanting more control:
+
+1. Create Portal (*Sharing* → *iSCSI* → *Portals*)
+2. Create Initiator (*Initiators* - optional, for access control)
+3. Create Authorized Access (*Authorized Access* - for CHAP)
+4. Create Target (*Targets*)
+5. Create Extent (*Extents*)
+6. Associate Target (*Associated Targets*)
+
+* Step 2: Enable iSCSI Service
+
+** 2.1 Start Service
+
+1. Go to *Services*
+2. Find *iSCSI* service
+3. Toggle to *ON*
+4. Check *Start Automatically*
+
+** 2.2 Verify Service Running
+
+Service status should show *Running*
+
+* Step 3: Verify Configuration
+
+** 3.1 Check Pool Usage
+
+***Critical Check***
+
+1. Go to *Storage* → *Pools*
+2. Check pool usage percentage
+3. **Should be under 80%**
+
+If showing 90%+:
+- Pool is over-allocated
+- See [[file:zfs-capacity-management-best-practices.org][troubleshooting section]]
+- May need to reduce extent size
+
+** 3.2 Understanding ZFS Overhead
+
+Your extent size vs. actual allocation may differ:
+
+Example from conversation:
+- Volume size: 2.8 TiB
+- Total allocation: 3.4 TiB
+- Difference: ~600 GiB overhead
+
+This is due to:
+- ZFS block allocation
+- Metadata structures
+- Volblocksize settings
+- Checksums and redundancy
+
+**Plan for ~20% overhead when sizing extents with thick provisioning.**
+
+* Step 4: Add iSCSI Storage to Proxmox
+
+** 4.1 Access Proxmox Storage Configuration
+
+1. Navigate to *Datacenter* → *Storage*
+2. Click *Add* → *iSCSI*
+
+** 4.2 Configure iSCSI Storage
+
+***ID***
+- Unique storage identifier
+- Example: =truenas-iscsi=
+
+***Portal***
+- TrueNAS VM's IP address
+- Example: =192.168.1.50=
+- Must match portal IP in TrueNAS
+
+***Target***
+- Click dropdown to detect available targets
+- Should auto-discover from portal
+- Select your target from list
+
+***Nodes***
+- Usually leave as "All"
+- Or select specific node
+
+***Enable***
+- Check to enable immediately
+
+***Use LUNs directly***
+- Uncheck for most use cases
+- Check for direct LUN passthrough
+
+** 4.3 iSCSI vs "ZFS over iSCSI"
+
+Proxmox offers two iSCSI storage types:
+
+****Regular iSCSI (Recommended)****
+
+What it does:
+- Proxmox uses iSCSI LUN directly
+- TrueNAS ZFS manages all storage features
+- Simpler configuration
+
+Use when:
+- TrueNAS already provides ZFS features
+- Want simplicity
+- TrueNAS handles snapshots/compression
+
+****ZFS over iSCSI****
+
+What it does:
+- Proxmox creates ZFS pool on top of iSCSI LUN
+- Double ZFS layer (Proxmox + TrueNAS)
+- More complex
+
+Use when:
+- Want Proxmox-side ZFS features
+- Need local snapshots in Proxmox
+- Advanced use cases
+
+**Recommendation:** Use regular *iSCSI* storage type to avoid double-ZFS complexity.
+
+** 4.4 Content Types
+
+For iSCSI storage, typically select:
+- ☑ Disk image (primary use case)
+
+Usually NOT selected:
+- VZDump backup file (better on NFS)
+- ISO image (better on NFS)
+- Container template (better on NFS)
+
+* Step 5: Verify and Test
+
+** 5.1 Check Storage Status
+
+In Proxmox:
+- Datacenter → Storage
+- Find your iSCSI storage
+- Status should be *Active*
+- Should show available space
+
+** 5.2 Common Issue: Zero Bytes/No Space
+
+If storage shows 0 bytes or no space:
+
+***Troubleshooting Steps***
+
+1. **Check iSCSI service in TrueNAS**
+   #+BEGIN_SRC bash
+   # In TrueNAS, Services section
+   # Verify iSCSI service is Running
+   #+END_SRC
+
+2. **Verify initiator access**
+   - TrueNAS: Sharing → iSCSI → Initiators
+   - Either allow "All Initiators" or add Proxmox IQN
+
+3. **Check target association**
+   - TrueNAS: Sharing → iSCSI → Associated Targets
+   - Verify extent is linked to target
+
+4. **Test from Proxmox host**
+   #+BEGIN_SRC bash
+   # Check if device detected
+   lsblk
+
+   # Check iSCSI session
+   iscsiadm -m session
+
+   # Try discovery
+   iscsiadm -m discovery -t sendtargets -p <truenas-ip>
+
+   # Rescan
+   iscsiadm -m session --rescan
+   #+END_SRC
+
+5. **Check firewall**
+   - Ensure port 3260 open on TrueNAS
+   - Verify network connectivity: =ping <truenas-ip>=
+
+** 5.3 Test VM Disk Creation
+
+1. Create new VM or edit existing
+2. Add hard disk
+3. Select iSCSI storage
+4. Create disk
+5. Verify disk appears in VM
+
+* Troubleshooting Guide
+
+** Storage Shows Active But Zero Size
+
+***Cause:*** iSCSI target discovered but LUN not accessible
+
+***Solutions:***
+1. Set initiators to "All Initiators" in TrueNAS
+2. Restart iSCSI service in TrueNAS
+3. Remove and re-add storage in Proxmox
+4. Check TrueNAS logs for errors
+
+** Cannot Discover Target
+
+***Cause:*** Network or service issues
+
+***Check:***
+#+BEGIN_SRC bash
+# From Proxmox host
+ping <truenas-ip>
+
+# Test port
+telnet <truenas-ip> 3260
+
+# Manual discovery
+iscsiadm -m discovery -t sendtargets -p <truenas-ip>
+#+END_SRC
+
+***Solutions:***
+- Verify iSCSI service running
+- Check portal IP is correct
+- Verify no firewall blocking port 3260
+- Ensure TrueNAS VM network interface up
+
+** Pool Usage Too High (90%+)
+
+***Cause:*** Extent too large or ZFS overhead
+
+See detailed troubleshooting in [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management]].
+
+***Solutions:***
+1. Delete extent and recreate smaller
+2. Switch to thin provisioning
+3. Add more physical storage to pool
+
+** Authentication Failures
+
+***Cause:*** CHAP credentials mismatch
+
+***Solutions:***
+1. Verify CHAP user/password in TrueNAS
+2. Check Proxmox initiator CHAP configuration
+3. Try disabling CHAP temporarily to isolate issue
+
+** Performance Issues
+
+***Optimizations:***
+1. Use VirtIO network adapter on TrueNAS VM
+2. Allocate adequate RAM to TrueNAS (16GB+)
+3. Use dedicated storage network
+4. Check volblocksize matches workload:
+   - 8K: General purpose
+   - 16K: Databases
+   - 64K: Sequential I/O
+
+** Session Drops/Timeouts
+
+***Solutions:***
+1. Increase iSCSI timeout values
+2. Check network stability
+3. Verify TrueNAS VM has adequate resources
+4. Review Proxmox host I/O load
+
+* Performance Optimization
+
+** Network Configuration
+
+***VirtIO Network Adapter***
+- Essential for TrueNAS VM
+- Significantly better than e1000
+- Lower latency
+
+***Dedicated Network Interface***
+- Add second NIC to TrueNAS VM
+- Dedicate to storage traffic
+- Use different subnet/VLAN
+
+***Jumbo Frames***
+- Set MTU 9000 on storage network
+- Reduces overhead for large transfers
+- Requires switch support
+
+** TrueNAS Configuration
+
+***ZFS Volblocksize***
+Match to workload:
+- 8K: Default, general purpose
+- 16K: Databases (MySQL, PostgreSQL)
+- 32K-64K: Large sequential I/O
+- 128K: Very large sequential I/O
+
+Set during extent creation; cannot change later.
+
+***RAM Allocation***
+- Minimum: 8GB
+- Recommended: 16GB+
+- ZFS ARC benefits from more RAM
+- Better caching = better performance
+
+***CPU Allocation***
+- Minimum: 2 cores
+- Recommended: 4+ cores
+- Enable CPU type "host" in Proxmox
+
+** Proxmox Configuration
+
+***I/O Thread***
+- Enable for VM disks on iSCSI
+- Better concurrent I/O handling
+
+***Cache Mode***
+- For iSCSI-backed VMs:
+  - write-back: Best performance (requires UPS)
+  - none: Safe default
+  - writethroug: Safer than write-back
+
+***Discard/TRIM***
+- Enable on VM disk if using SSD
+- Allows space reclamation
+- Improves long-term performance
+
+* Security Best Practices
+
+** Network Isolation
+
+- Use dedicated VLAN for iSCSI traffic
+- Separate from management network
+- Firewall rules to restrict access
+
+** Initiator Access Control
+
+- Don't use "All Initiators" in production
+- Explicitly list Proxmox initiator IQNs
+- Remove test configurations
+
+** CHAP Authentication
+
+Enable for production:
+
+1. In TrueNAS: Configure Authorized Access
+2. Set mutual CHAP for both directions
+3. Use strong passwords (16+ characters)
+4. Rotate credentials periodically
+
+** Firewall Configuration
+
+TrueNAS side:
+- Allow port 3260 TCP only from Proxmox
+- Block all other sources
+- Log denied attempts
+
+** Regular Security Tasks
+
+- Review initiator access lists
+- Audit iSCSI connections
+- Monitor for unauthorized discovery attempts
+- Update TrueNAS regularly
+
+* Maintenance and Monitoring
+
+** Regular Checks
+
+***Daily***
+- Monitor pool capacity (stay under 80%)
+- Check for error messages
+
+***Weekly***
+- Review iSCSI session status
+- Check Proxmox VM performance
+
+***Monthly***
+- Run ZFS scrub on TrueNAS
+- Review capacity planning
+- Test backup restoration
+
+** ZFS Scrub
+
+Essential for data integrity:
+
+#+BEGIN_SRC bash
+# In TrueNAS
+# Storage → Pools → Scrub Task
+# Schedule monthly scrubs
+#+END_SRC
+
+** Monitoring Commands
+
+***On Proxmox:***
+#+BEGIN_SRC bash
+# List iSCSI sessions
+iscsiadm -m session
+
+# Session details
+iscsiadm -m session -P 3
+
+# Check device
+lsblk | grep sd
+#+END_SRC
+
+***In TrueNAS:***
+- Dashboard: Pool status and usage
+- Storage → Pools: Detailed pool information
+- Reporting: I/O graphs and performance metrics
+
+* When to Choose iSCSI vs NFS
+
+** Choose iSCSI for:
+
+- VM disk storage (primary use case)
+- High-performance requirements
+- Low-latency applications
+- Databases (MySQL, PostgreSQL, etc.)
+- I/O intensive workloads
+- Single-client storage needs
+
+** Choose NFS for:
+
+- ISO images
+- Backup storage
+- Container templates
+- Shared file storage
+- Multi-client access
+- Simpler management needs
+
+** Use Both:
+
+Many setups benefit from both:
+- iSCSI: VM disks
+- NFS: Backups, ISOs, templates
+
+See [[file:truenas-proxmox-storage-overview.org][storage overview]] for detailed comparison.
+
+* Migration and Recovery
+
+** Migrating VM from Local to iSCSI
+
+1. Create new disk on iSCSI storage
+2. Use =qm disk move= or web interface migration
+3. Verify data integrity
+4. Update VM configuration
+5. Remove old local disk
+
+** Disaster Recovery
+
+***Backup Strategies***
+- Regular ZFS snapshots in TrueNAS
+- Proxmox backup to separate NFS storage
+- Off-site replication of critical data
+
+***Recovery Procedures***
+1. Restore TrueNAS configuration
+2. Re-enable iSCSI service
+3. Reconnect Proxmox to targets
+4. Verify VM accessibility
+
+* Related Topics
+
+- [[file:truenas-proxmox-storage-overview.org][TrueNAS-Proxmox Storage Integration Overview]]
+- [[file:truenas-nfs-proxmox-integration.org][TrueNAS NFS Integration (Simpler Alternative)]]
+- [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]]
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]]
+- [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning Types]]
+- [[file:truenas-proxmox-networking.org][Network Configuration Guide]]
+
+* TODO Tasks
+
+- TODO Document CHAP authentication configuration in detail
+- TODO Add performance benchmarking procedures
+- TODO Create migration guide from local storage
+- TODO Document multipathing configuration for redundancy
+- TODO Add examples of disaster recovery procedures

@@ -1,0 +1,555 @@
+#+TITLE: ZFS Capacity Management Best Practices
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: zfs storage capacity performance truenas
+
+* Overview
+
+One of the most critical aspects of managing ZFS storage systems is capacity planning and monitoring. The "80% rule" is not arbitrary—it's based on how ZFS operates internally and is essential for maintaining performance and data integrity.
+
+This guide explains why ZFS requires free space, how to calculate safe allocation limits, and what happens when pools get too full.
+
+* The 80% Rule
+
+** The Fundamental Principle
+
+***Never use more than 80% of your ZFS pool capacity.***
+
+This applies to:
+- Total pool allocation
+- Individual dataset usage
+- Combined usage of all datasets, snapshots, and volumes
+
+** Why 80% Specifically?
+
+The 80% threshold is where ZFS performance degradation becomes noticeable:
+
+| Pool Fullness | Performance Impact | Severity |
+|---------------+--------------------+----------|
+| < 80% | Normal operation | None |
+| 80-90% | Noticeable slowdown | Moderate |
+| 90-95% | Severe degradation | High |
+| 95-100% | Nearly unusable | Critical |
+
+** Performance Degradation Curve
+
+ZFS performance doesn't decline linearly—it accelerates:
+
+#+BEGIN_SRC
+Performance vs. Pool Fullness
+
+100% |
+     |
+ 75% |............
+     |            ........
+ 50% |                   ...
+     |                      ...
+ 25% |                         ..
+     |                           .
+  0% |____________________________
+     0%   25%   50%   75%   100%
+          Pool Fullness
+#+END_SRC
+
+* Why ZFS Needs Free Space
+
+** Copy-on-Write (COW) Architecture
+
+ZFS uses copy-on-write, which means:
+
+1. Data is never modified in place
+2. New data written to new location
+3. Metadata updated to point to new location
+4. Old data freed only after write confirmed
+
+***This requires free space to function.***
+
+** Write Operations
+
+Every write operation needs:
+
+***Data blocks***
+- Space for the actual data
+- Must find contiguous blocks when possible
+- More free space = easier to find optimal locations
+
+***Metadata***
+- Block pointers
+- Checksums
+- Timestamps
+- Directory entries
+
+***Indirect blocks***
+- For large files
+- Multiple levels of indirection
+- Each level needs space
+
+** Finding Free Space
+
+When pool is full:
+
+1. ZFS must search harder for free blocks
+2. Available blocks are scattered (fragmented)
+3. More I/O operations required per write
+4. Metadata operations become expensive
+5. Overall performance plummets
+
+* Critical ZFS Operations Requiring Free Space
+
+** Snapshots
+
+Snapshots don't initially use space, but:
+
+***Changed data***
+- Snapshots hold references to old data
+- Changed blocks need new space
+- More snapshots = more potential space usage
+
+***Space calculation***
+- If pool is 95% full
+- Even small changes may fail
+- Snapshot creation can fail
+
+** Scrubbing
+
+Data integrity checks need space for:
+
+***Repair operations***
+- If corruption found, needs space to repair
+- Cannot fix corruption without free space
+
+***Metadata operations***
+- Scrub generates I/O
+- Performance suffers when pool full
+
+** Resilvering
+
+Rebuilding after disk failure:
+
+***Critical space requirement***
+- Must write rebuilt data
+- Performance critical during resilver
+- Full pool = very slow resilver
+- May fail if no space
+
+** System Operations
+
+***Logs and metadata***
+- System logs
+- ZFS intent log (ZIL)
+- Metadata updates
+- All require free space
+
+* Calculating Safe Allocation
+
+** Basic Calculation
+
+For a pool of size S:
+- Maximum safe allocation = S × 0.80
+- Leave free = S × 0.20
+
+** Example: 3.5 TiB Pool
+
+#+BEGIN_SRC
+Pool size: 3.5 TiB
+Maximum allocation: 3.5 × 0.80 = 2.8 TiB
+Minimum free space: 3.5 × 0.20 = 0.7 TiB
+#+END_SRC
+
+** Unit Conversions
+
+Important for TrueNAS configuration:
+
+***TiB to GiB***
+- 1 TiB = 1024 GiB
+- 2.8 TiB = 2867.2 GiB
+- Round to: 2867 GiB or 2800 GiB
+
+***TiB to GB***
+- 1 TiB = 1099.51 GB
+- 2.8 TiB = 3078.64 GB
+- Round to: 3078 GB or 3000 GB
+
+***Safe rounding***
+- Always round DOWN
+- Better to be conservative
+- Leaves buffer for overhead
+
+** Accounting for ZFS Overhead
+
+ZFS reserves additional space for:
+
+***Metadata overhead***
+- ~1-5% depending on configuration
+- More small files = more metadata
+- Compression affects overhead
+
+***Block allocation overhead***
+- Especially with thick provisioning
+- Can be 15-20% of allocated size
+- Depends on volblocksize
+
+***Example: Thick Provisioned 2.8 TiB***
+
+From conversation example:
+- Requested size: 2.8 TiB
+- Actual allocation: 3.4 TiB
+- Overhead: 0.6 TiB (~21%)
+
+This is why pool showed 97% full!
+
+* Provisioning Type Impact on Capacity
+
+See [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning]] for detailed comparison.
+
+** Thick Provisioning
+
+***Space allocation***
+- Immediate reservation of full size
+- Includes overhead (metadata, blocks, checksums)
+- Total allocation > requested size
+
+***Capacity planning***
+- Must account for actual allocation
+- Check pool usage after creation
+- Overhead can be 15-25%
+
+***Example calculation***
+For 3.5 TiB pool with thick provisioning:
+- Target: 80% = 2.8 TiB
+- Overhead: ~20%
+- Safe allocation: 2.8 / 1.20 = 2.33 TiB
+- Enter as: 2386 GiB or 2400 GiB
+
+** Thin Provisioning
+
+***Space allocation***
+- Allocated as data written
+- Initial overhead minimal
+- Grows with actual usage
+
+***Capacity planning***
+- Can "oversubscribe" total allocations
+- Monitor actual usage, not allocated size
+- More flexible but requires monitoring
+
+***Example calculation***
+For 3.5 TiB pool with thin provisioning:
+- Can allocate 2.8 TiB (or even more)
+- Monitor real usage stays under 2.8 TiB
+- Much more flexible
+
+* Monitoring Pool Capacity
+
+** In TrueNAS Web Interface
+
+***Dashboard***
+- Shows pool usage percentage
+- Visual indicators
+- Color codes:
+  - Green: < 80%
+  - Yellow: 80-90%
+  - Red: > 90%
+
+***Storage → Pools***
+- Detailed capacity information
+- Dataset breakdown
+- Snapshot usage
+
+** Command Line Monitoring
+
+#+BEGIN_SRC bash
+# Pool status and capacity
+zpool list
+
+# Detailed pool information
+zpool list -v poolname
+
+# Dataset usage
+zfs list
+
+# Include snapshots
+zfs list -t snapshot
+
+# Recursive with all properties
+zfs list -r -o name,used,avail,refer poolname
+#+END_SRC
+
+** Setting Up Alerts
+
+Configure TrueNAS to alert when:
+- Pool exceeds 70% (warning)
+- Pool exceeds 80% (critical)
+- Available space below threshold
+
+* What Happens When Pool Gets Too Full
+
+** 80-90% Full: Warning Zone
+
+***Symptoms***
+- Noticeable write slowdown
+- Longer backup times
+- Increased I/O wait times
+
+***Actions***
+- Stop creating new datasets/volumes
+- Delete unnecessary snapshots
+- Plan capacity expansion
+- Clean up old data
+
+** 90-95% Full: Critical Zone
+
+***Symptoms***
+- Severe performance degradation
+- Write operations very slow
+- System may feel unresponsive
+- Error messages appearing
+
+***Actions***
+- Immediately stop allocating new space
+- Delete snapshots aggressively
+- Remove old/temporary data
+- Urgent capacity expansion needed
+
+** 95-100% Full: Emergency
+
+***Symptoms***
+- Writes may fail completely
+- System instability
+- Operations timing out
+- Risk of data corruption
+
+***Emergency actions***
+1. Delete any non-critical data immediately
+2. Remove old snapshots
+3. Cannot add space without free space
+4. May need to destroy datasets
+
+* Troubleshooting: Pool Usage Too High
+
+** Scenario from Conversation
+
+***Problem***
+- Pool: 3.5 TiB total
+- Allocated: 2.8 TiB extent
+- Showing: 97.1% full
+
+***Root cause***
+- Thick provisioning overhead
+- Total allocation: 3.4 TiB
+- Overhead: 0.6 TiB
+
+** Investigation Steps
+
+*** Step 1: Check Dataset Usage
+
+#+BEGIN_SRC bash
+# In TrueNAS
+# Storage → Pools → [Your Pool]
+# Look at datasets and volumes
+#+END_SRC
+
+*** Step 2: Check Extent Properties
+
+In TrueNAS web interface:
+1. Sharing → Block Shares (iSCSI) → Extents
+2. View extent properties
+3. Check "Total Allocation" vs "Volume Size"
+
+*** Step 3: Verify Provisioning Type
+
+Look for:
+- Provisioning type: Thick or Thin
+- Volume size
+- Total allocation
+- Space available to volume
+
+** Solutions
+
+*** Solution 1: Reduce Extent Size
+
+1. Delete existing extent
+   ⚠ Warning: This destroys data!
+2. Create new extent with smaller size
+3. Account for overhead (~20%)
+4. Target 70-75% pool usage
+
+#+BEGIN_SRC
+New calculation:
+3.5 TiB pool
+Target 75% usage = 2.625 TiB
+With 20% overhead: 2.625 / 1.20 = 2.19 TiB
+Create extent: 2200 GiB or 2.2 TiB
+#+END_SRC
+
+*** Solution 2: Switch to Thin Provisioning
+
+1. Delete thick provisioned extent
+2. Create new extent with thin/sparse enabled
+3. Can allocate 2.8 TiB
+4. Monitor actual usage
+
+*** Solution 3: Add Physical Storage
+
+If possible:
+1. Add more drives to pool
+2. Expand existing vdevs (if mirror)
+3. Increases total capacity
+4. Reduces usage percentage
+
+*** Solution 4: Create Multiple Smaller Extents
+
+Instead of one large extent:
+- Multiple 1 TiB extents
+- Better capacity management
+- Can delete individual extents easier
+- More flexible allocation
+
+* Best Practices for Capacity Planning
+
+** Initial Allocation
+
+When setting up new storage:
+
+1. ***Calculate 80% of total pool size***
+2. ***Subtract 20% for thick provisioning overhead***
+3. ***Round down for safety***
+4. ***Monitor after creation***
+5. ***Verify pool usage < 80%***
+
+** Ongoing Monitoring
+
+***Daily checks***
+- Automated alerts for thresholds
+- Dashboard quick glance
+
+***Weekly reviews***
+- Detailed capacity reports
+- Growth trends
+- Snapshot accumulation
+
+***Monthly planning***
+- Capacity forecasting
+- Expansion planning
+- Data lifecycle review
+
+** Growth Planning
+
+***Forecast capacity needs***
+- Historical growth rates
+- Planned additions
+- Seasonal variations
+
+***Plan expansions before 70%***
+- Order hardware early
+- Test expansion procedures
+- Schedule maintenance windows
+
+** Snapshot Management
+
+Snapshots can consume significant space:
+
+***Retention policies***
+- Hourly: Keep 24
+- Daily: Keep 7
+- Weekly: Keep 4
+- Monthly: Keep 6
+
+***Automated cleanup***
+- Configure snapshot tasks
+- Automatic deletion of old snapshots
+- Balance retention vs. capacity
+
+** Data Lifecycle
+
+***Regular cleanup***
+- Archive old data
+- Delete obsolete VMs/datasets
+- Compress infrequently accessed data
+
+***Storage tiers***
+- Hot data: Fast storage
+- Warm data: Standard storage
+- Cold data: Archive or delete
+
+* ZFS Pool Expansion Strategies
+
+When you need more space:
+
+** Option 1: Add Vdevs
+
+***For mirrors***
+- Add new mirror vdev
+- Increases capacity and performance
+- Can add incrementally
+
+***For RAIDZ***
+- Add new RAIDZ vdev
+- Must match existing vdev configuration
+- Increases capacity
+
+** Option 2: Replace Disks (Mirrors Only)
+
+1. Replace each disk with larger disk
+2. Resilver after each replacement
+3. After all replaced, pool expands automatically
+4. Works only with mirrors, not RAIDZ
+
+** Option 3: Create New Pool
+
+If expansion not possible:
+1. Create new pool with more/larger disks
+2. Migrate data to new pool
+3. Decommission old pool
+
+* Related Topics
+
+- [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning Types]]
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration]]
+- [[file:truenas-nfs-proxmox-integration.org][TrueNAS NFS Integration]]
+- [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]]
+
+* Quick Reference
+
+** Safe Allocation Formula
+
+#+BEGIN_SRC
+Maximum Safe Allocation = Pool Size × 0.80
+
+For Thick Provisioning:
+Safe Extent Size = (Pool Size × 0.80) / 1.20
+
+For Thin Provisioning:
+Safe Extent Size = Pool Size × 0.80
+(Monitor actual usage)
+#+END_SRC
+
+** Capacity Status Guide
+
+| Usage | Status | Action |
+|-------+--------+--------|
+| < 70% | Healthy | Normal operations |
+| 70-80% | Monitor | Plan expansion |
+| 80-90% | Warning | Stop new allocations |
+| 90-95% | Critical | Free space urgently |
+| > 95% | Emergency | Immediate action required |
+
+** Unit Conversion Quick Reference
+
+| TiB | GiB | GB |
+|-----+-----+----|
+| 1.0 | 1024 | 1100 |
+| 2.0 | 2048 | 2199 |
+| 2.5 | 2560 | 2749 |
+| 2.8 | 2867 | 3079 |
+| 3.0 | 3072 | 3298 |
+| 3.5 | 3584 | 3848 |
+| 4.0 | 4096 | 4398 |
+
+* TODO Tasks
+
+- TODO Set up automated capacity monitoring and alerts
+- TODO Document pool expansion procedures
+- TODO Create capacity forecasting tools
+- TODO Develop snapshot retention policy
+- TODO Plan regular capacity review schedule
