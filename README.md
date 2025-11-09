@@ -64,6 +64,12 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [npm-nodejs-maintenance-guide.md](npm-nodejs-maintenance-guide.md) - Covers updating npm/Node.js, using nvm for version management, understanding version isolation, and troubleshooting with npm doctor.
 
+## Network Storage & Backup
+
+### TrueNAS Integration
+
+- [truenas-mac-rsync-ssh-setup.md](truenas-mac-rsync-ssh-setup.md) - Complete guide for setting up SSH key-based authentication between macOS and TrueNAS for secure, password-less Rsync operations, including SSH config simplification, automated backup scripts, and security best practices.
+
 ## OLOL & Distributed LLM Inference
 
 ### Core Distributed Inference
@@ -147,6 +153,7 @@ This repository serves as a knowledge base for:
 - Integrating AI coding assistants with Emacs
 - Building org-roam and magit extensions for Zettelkasten workflows
 - Developing Elisp tools for git content tracking and similarity detection
+- Configuring secure SSH/Rsync connections to TrueNAS for automated backups
 - Building distributed inference systems for LLMs
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems
