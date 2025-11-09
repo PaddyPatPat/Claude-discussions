@@ -1,0 +1,660 @@
+#+TITLE: iSCSI Configuration Reference
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: iscsi truenas configuration reference blocksize
+
+* Overview
+
+This document provides detailed reference information for iSCSI configuration options in TrueNAS, particularly focusing on settings relevant for Proxmox integration.
+
+For step-by-step setup instructions, see [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration Guide]].
+
+* Platform/Sharing Platform Settings
+
+When creating an iSCSI extent using the wizard, TrueNAS asks for "Sharing Platform" which configures several low-level parameters.
+
+** Available Platform Presets
+
+*** VMware
+#+BEGIN_SRC
+Extent block size: 512b
+TPC: Enabled
+Xen compatibility mode: Disabled
+SSD speed: Enabled
+#+END_SRC
+
+***Purpose:*** Optimized for VMware ESXi
+***Use for Proxmox:*** NO - incompatible settings
+
+*** Modern OS / Generic
+
+Settings vary but typically:
+#+BEGIN_SRC
+Extent block size: 4K
+TPC: Enabled
+Xen compatibility mode: Disabled
+SSD speed: Configurable
+#+END_SRC
+
+***Purpose:*** General purpose for modern operating systems
+***Use for Proxmox:*** YES - good default choice
+
+** Individual Settings Explained
+
+*** Extent Block Size (512b vs 4K)
+
+****What it is:****
+- Physical block size presented to initiator
+- Size of smallest addressable unit
+- Affects alignment and performance
+
+****Options:****
+
+*****512 bytes (512b)*****
+- Traditional hard drive sector size
+- Legacy compatibility
+- Required for very old systems
+- Less efficient with modern drives
+
+*****4096 bytes (4K)*****
+- Modern drive native sector size
+- Better performance with modern hardware
+- Proper alignment with physical drives
+- Recommended for new deployments
+
+****How to choose:****
+
+| Your Storage | Recommended Block Size |
+|--------------+------------------------|
+| Modern HDDs (2015+) | 4K |
+| SSDs | 4K |
+| Old HDDs (pre-2010) | 512b |
+| Mixed environment | 512b (safer) |
+| Proxmox VMs | 4K (recommended) |
+
+****For Proxmox: Use 4K*** unless you have specific legacy requirements.
+
+*** TPC (Third Party Copy)
+
+****What it is:****
+- Allows storage array to handle copy operations internally
+- Offloads copy operations from client
+- More efficient for cloning/migration
+
+****Settings:****
+- Enabled: Storage handles copies (recommended)
+- Disabled: Client must copy data through network
+
+****Impact:****
+- Enabled: Faster VM cloning, storage-side snapshots
+- Disabled: All copies go through network
+
+****For Proxmox: Enable TPC*** for better efficiency.
+
+*** Xen Compatibility Mode
+
+****What it is:****
+- Special mode for Xen hypervisor
+- Specific I/O patterns and optimizations
+- Can cause issues with other hypervisors
+
+****Settings:****
+- Enabled: Optimized for Xen
+- Disabled: Standard behavior
+
+****Impact:****
+- Enabled with KVM/QEMU: May cause I/O issues
+- Enabled with Xen: Better performance
+- Disabled: Works with all hypervisors
+
+****For Proxmox: MUST be Disabled***
+- Proxmox uses KVM/QEMU, not Xen
+- Enabling can cause serious problems
+
+*** SSD Speed
+
+****What it is:****
+- Indicates to guest OS that storage is SSD
+- Enables SSD-specific optimizations
+- Affects TRIM/discard behavior
+
+****Settings:****
+- Enabled: Tells guest this is SSD
+- Disabled: Tells guest this is HDD
+
+****Impact when enabled:****
+- Guest OS may skip defragmentation
+- Enables TRIM/discard commands
+- Different I/O scheduler selection
+- Potential wear-leveling optimizations
+
+****How to choose:****
+
+| Your TrueNAS Storage | SSD Speed Setting |
+|----------------------+-------------------|
+| All SSDs | Enabled |
+| All HDDs | Disabled |
+| SSD + HDD (hybrid) | Enabled if mostly SSD |
+| ZIL on SSD | Disabled (data on HDD) |
+
+****For Proxmox:***
+- Enable if TrueNAS pool is on SSDs
+- Disable if pool is on HDDs
+- Consider workload and actual hardware
+
+* Recommended Settings for Proxmox
+
+** Quick Reference Table
+
+| Setting | Recommended Value | Reason |
+|---------+-------------------+--------|
+| Platform | Generic/Modern OS | Compatible settings |
+| Block size | 4K | Modern drives, better performance |
+| TPC | Enabled | Efficient cloning |
+| Xen mode | Disabled | Proxmox uses KVM |
+| SSD speed | Match hardware | Correct optimizations |
+
+** Manual Configuration (Not Using Wizard)
+
+If configuring manually instead of wizard:
+
+#+BEGIN_SRC
+Create Extent with these properties:
+- Blocksize: 4096
+- Disable Physical Block Size Reporting: Unchecked
+- Available Space Threshold: 20% (default)
+- Enable TPC: Checked
+- Xen Initiator Compat Mode: Unchecked
+- LUN RPM: SSD if SSDs, else 7200/10000/15000
+#+END_SRC
+
+* Volblocksize (ZFS Volume Block Size)
+
+Separate from extent block size, this is ZFS-level setting.
+
+** What It Is
+
+- Size of blocks ZFS uses for zvol
+- Set at zvol creation
+- Cannot be changed later
+- Affects performance and overhead
+
+** Available Sizes
+
+Common options:
+- 4K (4096 bytes)
+- 8K (8192 bytes) - default
+- 16K (16384 bytes)
+- 32K (32768 bytes)
+- 64K (65536 bytes)
+- 128K (131072 bytes)
+
+** Choosing Volblocksize
+
+Match to workload I/O pattern:
+
+| Workload Type | Recommended Volblocksize | Reason |
+|---------------+--------------------------+--------|
+| General purpose VMs | 8K | Default, good balance |
+| Database (small transactions) | 8K-16K | Matches DB page sizes |
+| PostgreSQL | 8K | Matches default PG block size |
+| MySQL/InnoDB | 16K | Matches default InnoDB page |
+| Large sequential I/O | 64K-128K | Fewer I/O operations |
+| Windows VMs | 64K | Matches NTFS cluster size |
+| Mixed workload | 8K | Safe default |
+
+** Performance Impact
+
+***Smaller volblocksize (4K-8K):***
+- Better for random I/O
+- More metadata overhead
+- Better for databases
+- More flexibility
+
+***Larger volblocksize (32K-128K):***
+- Better for sequential I/O
+- Less metadata overhead
+- Better for large files
+- More waste for small files
+
+** Overhead Impact
+
+Larger volblocksize = more thick provisioning overhead:
+
+#+BEGIN_SRC
+Example 2.8 TiB extent:
+- 8K volblocksize: ~3.0 TiB total allocation
+- 64K volblocksize: ~3.4 TiB total allocation
+- 128K volblocksize: ~3.6 TiB total allocation
+#+END_SRC
+
+This explains the conversation example overhead!
+
+** Recommendation for Proxmox
+
+***Default choice: 8K***
+- Good balance
+- Handles most workloads
+- Reasonable overhead
+
+***For specific workloads:***
+- Databases: 16K
+- File servers: 64K
+- Mixed: 8K
+
+* Portal Configuration
+
+** Portal IP Addresses
+
+See [[file:truenas-proxmox-networking.org][networking guide]] for detailed discussion.
+
+*** Quick Reference
+
+| Option | When to Use | IPv4/IPv6 |
+|--------+-------------+-----------|
+| 0.0.0.0 | Most common, all IPv4 | IPv4 only |
+| Specific IP | Single interface, explicit | IPv4 |
+| :: | IPv6 networks | IPv6 (may accept v4) |
+| Multiple portals | Dual-stack explicit | Both |
+
+*** Recommendation
+
+Start with ***0.0.0.0*** for simplicity and IPv4 compatibility.
+
+** Portal Port
+
+***Default: 3260***
+- Standard iSCSI port
+- Rarely needs changing
+- Must match on initiator
+
+***Custom ports:***
+- Use if standard port conflicts
+- Update firewall rules
+- Document clearly
+- Initiator must specify port
+
+* Initiator Configuration
+
+** Access Control Options
+
+*** Allow All Initiators
+
+***Configuration:***
+- No specific initiator list
+- Any IQN can discover/connect
+- Simplest setup
+
+***Security:***
+- Low - any host can connect
+- Use only for testing
+- Not recommended for production
+
+***Use when:***
+- Initial testing
+- Lab environment
+- Troubleshooting connectivity
+
+*** Specific Initiators
+
+***Configuration:***
+- List allowed initiator IQNs
+- Only listed can connect
+- More complex
+
+***Security:***
+- Better - restricted access
+- Recommended for production
+
+***Use when:***
+- Production deployments
+- Known client list
+- Security important
+
+** Finding Initiator IQN
+
+***On Proxmox host:***
+
+#+BEGIN_SRC bash
+cat /etc/iscsi/initiatorname.iscsi
+
+# Example output:
+# InitiatorName=iqn.1993-08.org.debian:01:abcdef123456
+#+END_SRC
+
+***Add this IQN to TrueNAS:***
+- Sharing → iSCSI → Initiators
+- Add initiator with this IQN
+
+* Authentication (CHAP)
+
+** CHAP Overview
+
+Challenge-Handshake Authentication Protocol:
+- Password-based authentication
+- Protects against unauthorized access
+- Two-way authentication possible
+
+** CHAP Configuration
+
+*** Mutual CHAP (Recommended)
+
+Both target and initiator authenticate:
+
+****In TrueNAS:****
+1. Sharing → iSCSI → Authorized Access
+2. Add entry:
+   - Group ID
+   - User/secret for target → initiator
+   - Peer user/secret for initiator → target
+
+****In Proxmox:****
+#+BEGIN_SRC bash
+# Edit /etc/iscsi/iscsid.conf
+node.session.auth.authmethod = CHAP
+node.session.auth.username = <user>
+node.session.auth.password = <secret>
+node.session.auth.username_in = <peer_user>
+node.session.auth.password_in = <peer_secret>
+#+END_SRC
+
+*** One-way CHAP
+
+Only target authenticates to initiator:
+- Simpler
+- Less secure
+- Still better than no auth
+
+** Password Requirements
+
+***Strong passwords:***
+- Minimum 12-16 characters
+- Mix of letters, numbers, symbols
+- Not dictionary words
+- Unique per target
+
+* Target Configuration
+
+** Target Naming
+
+***IQN format:***
+#+BEGIN_SRC
+iqn.YYYY-MM.reversed.domain.name:unique.identifier
+
+Example:
+iqn.2005-10.org.freenas.ctl:target0
+#+END_SRC
+
+***Components:***
+- iqn: iSCSI Qualified Name
+- 2005-10: Date domain acquired/org formed
+- org.freenas: Reversed domain
+- target0: Unique identifier
+
+** Target Portal Groups
+
+Associates target with portal:
+- Which IP/port serves this target
+- Usually portal group 1
+- Can have multiple for redundancy
+
+* Extent Configuration Summary
+
+** Critical Decisions
+
+When creating extent, decide:
+
+1. ***Type:*** Device (zvol) or File
+   - Recommend: Device for Proxmox
+
+2. ***Provisioning:*** Thick or Thin
+   - Thick: Predictable, more overhead
+   - Thin: Flexible, requires monitoring
+   - See [[file:zfs-storage-provisioning.org][provisioning guide]]
+
+3. ***Size:*** How large?
+   - Follow 80% rule
+   - Account for overhead
+   - See [[file:zfs-capacity-management-best-practices.org][capacity management]]
+
+4. ***Blocksize:*** 512b or 4K?
+   - Recommend: 4K for Proxmox
+
+5. ***Volblocksize:*** 8K, 16K, 64K?
+   - Default: 8K
+   - Databases: 16K
+   - File servers: 64K
+
+** Extent Size Units
+
+Must use whole numbers:
+
+***Valid formats:***
+- =2800= (assumes GiB)
+- =2800GiB=
+- =3000GB=
+- =2.5TiB= → Convert to =2560GiB=
+
+***Invalid formats:***
+- =2.8TiB= (decimal - causes error)
+- =2800.5GiB= (decimal)
+
+***Conversion reference:***
+| TiB | GiB | GB (approx) |
+|-----+-----+-------------|
+| 2.0 | 2048 | 2199 |
+| 2.5 | 2560 | 2748 |
+| 2.8 | 2867 | 3078 |
+| 3.0 | 3072 | 3298 |
+
+* Associated Targets
+
+Links extent to target:
+
+***Configuration:***
+- Target: Which target
+- LUN: Logical Unit Number (usually 0)
+- Extent: Which extent to present
+
+***One-to-one mapping:***
+- One extent per LUN
+- Multiple LUNs per target possible
+- Usually keep simple: one extent per target
+
+* Common Configuration Patterns
+
+** Pattern 1: Simple Single Extent
+
+***Use case:*** Basic Proxmox VM storage
+
+#+BEGIN_SRC
+Portal:
+- IP: 0.0.0.0
+- Port: 3260
+
+Initiator:
+- Allow all (testing) or specific IQN (production)
+
+Target:
+- Name: iqn.2005-10.org.freenas.ctl:proxmox-storage
+- Portal group: 1
+
+Extent:
+- Type: Device (zvol)
+- Size: 2800 GiB
+- Provisioning: Thin
+- Blocksize: 4K
+- Volblocksize: 8K
+
+Associated target:
+- Target: proxmox-storage
+- LUN: 0
+- Extent: proxmox-storage-extent
+#+END_SRC
+
+** Pattern 2: Multi-LUN Configuration
+
+***Use case:*** Separate storage for different purposes
+
+#+BEGIN_SRC
+Portal: Same as above
+
+Target: iqn.2005-10.org.freenas.ctl:proxmox-multi
+
+Extent 1:
+- Name: vm-storage
+- Size: 2000 GiB
+- LUN: 0
+
+Extent 2:
+- Name: db-storage
+- Size: 500 GiB
+- Volblocksize: 16K (for database)
+- LUN: 1
+
+Extent 3:
+- Name: backup-storage
+- Size: 1000 GiB
+- Volblocksize: 64K (for backups)
+- LUN: 2
+#+END_SRC
+
+** Pattern 3: High Security
+
+***Use case:*** Production with authentication
+
+#+BEGIN_SRC
+Portal:
+- IP: 10.0.100.50 (storage network only)
+- Port: 3260
+
+Initiator:
+- Specific IQN only
+- iqn.1993-08.org.debian:01:proxmox
+
+Authorized Access:
+- Mutual CHAP enabled
+- User: proxmox-target-user
+- Secret: <strong-password>
+- Peer user: proxmox-initiator-user
+- Peer secret: <strong-password>
+
+Target:
+- Portal group restricts to storage network
+
+Extent:
+- Type: Device
+- Provisioning: Thick (guaranteed space)
+- Blocksize: 4K
+#+END_SRC
+
+* Troubleshooting Reference
+
+** Error: Vol size not an integer
+
+***Cause:*** Entered decimal in size field
+
+***Solution:***
+- Convert to whole numbers
+- 2.8 TiB → 2867 GiB or 3078 GB
+- Enter: =2867GiB= or =2867=
+
+** Error: Pool 97% full after extent creation
+
+***Cause:*** Thick provisioning overhead
+
+***Solution:***
+See [[file:zfs-capacity-management-best-practices.org][capacity management guide]]
+- Reduce extent size
+- Or switch to thin provisioning
+
+** Zero bytes in Proxmox storage
+
+***Causes:***
+1. iSCSI service not running
+2. Initiator not allowed
+3. Target not associated with extent
+4. Network/firewall issues
+
+***Solutions:***
+See [[file:truenas-iscsi-proxmox-integration.org][iSCSI integration guide]] troubleshooting section
+
+* Performance Tuning Reference
+
+** For Random I/O Workloads
+
+- Volblocksize: 8K or 16K
+- Smaller is better
+- Database servers
+- OLTP workloads
+
+** For Sequential I/O Workloads
+
+- Volblocksize: 64K or 128K
+- Larger is better
+- File servers
+- Video editing
+
+** For Mixed Workloads
+
+- Volblocksize: 8K (default)
+- Safe middle ground
+- General purpose VMs
+
+** Network Optimizations
+
+See [[file:truenas-proxmox-networking.org][networking guide]]:
+- VirtIO adapters
+- Jumbo frames (MTU 9000)
+- Dedicated storage network
+
+* Security Checklist
+
+- [ ] iSCSI portal not on 0.0.0.0 in production (use specific IP)
+- [ ] Initiator access restricted (not "all initiators")
+- [ ] CHAP authentication enabled
+- [ ] Strong CHAP passwords (16+ characters)
+- [ ] Firewall rules restricting port 3260
+- [ ] Storage traffic on dedicated VLAN
+- [ ] Regular security audits
+- [ ] Logs monitored for unauthorized access
+
+* Quick Decision Guide
+
+Start here:
+
+1. ***Using Wizard?*** YES (easier for beginners)
+
+2. ***Platform?*** Generic/Modern OS (NOT VMware)
+
+3. ***Blocksize?*** 4K (modern drives)
+
+4. ***Type?*** Device (better performance)
+
+5. ***Provisioning?*** Thin (more flexible)
+
+6. ***Size?*** Calculate from pool size × 0.80
+
+7. ***Portal IP?*** 0.0.0.0 (simple start)
+
+8. ***Initiators?*** All (testing) → Specific IQN (production)
+
+9. ***CHAP?*** No (testing) → Yes (production)
+
+Then optimize based on experience and requirements.
+
+* Related Topics
+
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration Guide]] (step-by-step setup)
+- [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning Types]] (thick/thin explained)
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management]] (sizing guidance)
+- [[file:truenas-proxmox-networking.org][Network Configuration]] (IP, VLAN, performance)
+- [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]]
+
+* TODO Tasks
+
+- TODO Add volblocksize performance benchmarks
+- TODO Document blocksize migration procedures
+- TODO Create configuration templates for common scenarios
+- TODO Add CHAP configuration examples with screenshots
+- TODO Document multipath configuration options

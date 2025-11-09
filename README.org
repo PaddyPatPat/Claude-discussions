@@ -1,0 +1,281 @@
+#+TITLE: Claude Discussions Knowledge Repository
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: documentation knowledge-base index
+
+* Welcome
+
+This repository contains comprehensive documentation extracted from conversations with Claude, organized as a searchable knowledge base using Org mode.
+
+* Repository Structure
+
+This knowledge base is organized into focused, topic-based documents that cross-reference each other extensively. Each document is independently readable while being part of an interconnected knowledge graph.
+
+* Documentation Topics
+
+** TrueNAS and Proxmox Integration
+
+Documentation covering the integration of TrueNAS storage with Proxmox VE, including network configuration, storage protocols, and performance optimization.
+
+*** Getting Started
+
+Start here for an overview:
+- [[file:truenas-proxmox-storage-overview.org][TrueNAS-Proxmox Storage Integration Overview]]
+
+*** Storage Protocol Guides
+
+Step-by-step integration guides:
+- [[file:truenas-nfs-proxmox-integration.org][TrueNAS NFS Integration with Proxmox]] - Simpler option for ISOs, backups, templates
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration with Proxmox]] - High-performance VM disk storage
+
+*** Core Concepts and Best Practices
+
+Essential knowledge for managing ZFS storage:
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]] - The critical 80% rule explained
+- [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning Types]] - Thick vs thin, device vs file extents
+
+*** Advanced Topics
+
+For deeper understanding and optimization:
+- [[file:truenas-proxmox-networking.org][TrueNAS-Proxmox Network Configuration]] - Network design, VLANs, IPv4/IPv6, performance
+- [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]] - Detailed parameter explanations
+
+** Topic Dependency Map
+
+#+BEGIN_SRC
+┌─────────────────────────────────────────┐
+│  TrueNAS-Proxmox Storage Overview      │  ← Start here
+│  (High-level concepts and options)      │
+└──────────────┬──────────────────────────┘
+               │
+       ┌───────┴───────┐
+       │               │
+       ▼               ▼
+┌─────────────┐  ┌──────────────┐
+│ NFS Guide   │  │ iSCSI Guide  │  ← Implementation guides
+└─────────────┘  └──────┬───────┘
+                        │
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ ZFS Capacity │ │ Provisioning │ │ Networking   │  ← Core concepts
+│ Management   │ │ Types        │ │ Guide        │
+└──────────────┘ └──────────────┘ └──────────────┘
+                        │
+                        ▼
+                ┌──────────────┐
+                │ iSCSI Config │  ← Reference
+                │ Reference    │
+                └──────────────┘
+#+END_SRC
+
+* Quick Start Guides
+
+** I want to add TrueNAS storage to Proxmox - where do I start?
+
+1. Read [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]] to understand options
+2. Choose your protocol:
+   - For ISOs, backups, templates → [[file:truenas-nfs-proxmox-integration.org][NFS Guide]]
+   - For VM disks, high performance → [[file:truenas-iscsi-proxmox-integration.org][iSCSI Guide]]
+3. Understand [[file:zfs-capacity-management-best-practices.org][ZFS capacity management]] before allocating storage
+4. Configure networking using [[file:truenas-proxmox-networking.org][Networking Guide]]
+
+** I'm getting "pool 97% full" errors - help!
+
+1. Read [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]]
+2. Specifically: "Troubleshooting: Pool Usage Too High" section
+3. Understand [[file:zfs-storage-provisioning.org][thick vs thin provisioning]]
+4. Recalculate proper extent size
+
+** I can't connect to my iSCSI target
+
+1. Check [[file:truenas-iscsi-proxmox-integration.org][iSCSI Integration Guide]] troubleshooting section
+2. Verify network connectivity using [[file:truenas-proxmox-networking.org][Networking Guide]]
+3. Review configuration against [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]]
+
+** My storage performance is slow
+
+1. Verify network configuration in [[file:truenas-proxmox-networking.org][Networking Guide]]
+   - Using VirtIO adapters?
+   - Jumbo frames enabled?
+   - Dedicated storage network?
+2. Check volblocksize in [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]]
+3. Review capacity usage in [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management]]
+   - Is pool over 80% full?
+
+** Should I use NFS or iSCSI?
+
+See the comparison table in [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]].
+
+Quick answer:
+- ***NFS:*** ISOs, backups, templates, shared storage, simplicity
+- ***iSCSI:*** VM disks, databases, high performance, block-level access
+
+* File Size and Organization
+
+All documentation files are designed to be:
+- **Focused**: Each covers a specific subtopic (3-15KB)
+- **Independently readable**: Can be understood standalone
+- **Well cross-referenced**: Links to related topics
+- **Actionable**: Includes practical examples and TODO items
+
+** Current Documentation Files
+
+| File | Size | Purpose |
+|------+------+---------|
+| [[file:truenas-proxmox-storage-overview.org][truenas-proxmox-storage-overview.org]] | ~14KB | Overview and comparison of integration options |
+| [[file:truenas-nfs-proxmox-integration.org][truenas-nfs-proxmox-integration.org]] | ~15KB | Complete NFS setup guide with troubleshooting |
+| [[file:truenas-iscsi-proxmox-integration.org][truenas-iscsi-proxmox-integration.org]] | ~24KB | Comprehensive iSCSI integration guide |
+| [[file:zfs-capacity-management-best-practices.org][zfs-capacity-management-best-practices.org]] | ~15KB | The 80% rule and capacity planning |
+| [[file:zfs-storage-provisioning.org][zfs-storage-provisioning.org]] | ~17KB | Thick/thin provisioning, device/file extents |
+| [[file:truenas-proxmox-networking.org][truenas-proxmox-networking.org]] | ~14KB | Network design, VLANs, IPv4/IPv6, optimization |
+| [[file:truenas-iscsi-configuration-reference.org][truenas-iscsi-configuration-reference.org]] | ~14KB | Detailed iSCSI parameter reference |
+
+* Key Concepts Covered
+
+** ZFS Storage Management
+
+- ***The 80% Rule***: Critical capacity threshold for ZFS performance
+- ***Copy-on-Write architecture***: Why ZFS needs free space
+- ***Thick vs Thin Provisioning***: Space allocation strategies
+- ***ZFS overhead***: Understanding actual vs allocated space
+- ***Capacity monitoring***: Tools and techniques
+
+** iSCSI Protocol
+
+- ***Targets, Initiators, Portals***: Core iSCSI concepts
+- ***Extent types***: Device (zvol) vs file-based
+- ***Block sizes***: 512b vs 4K, volblocksize options
+- ***Platform settings***: VMware vs Modern OS presets
+- ***Authentication***: CHAP configuration
+- ***Performance tuning***: Workload-specific optimization
+
+** Network Configuration
+
+- ***Bridged vs internal networks***: Design patterns
+- ***IPv4/IPv6 dual-stack***: Portal configuration
+- ***VirtIO adapters***: Critical for performance
+- ***Jumbo frames***: MTU 9000 configuration
+- ***VLANs***: Network segmentation
+- ***Dedicated storage networks***: Best practices
+
+** Integration Patterns
+
+- ***Direct VM access***: VMs mount shares individually
+- ***Datacenter Storage integration***: Centralized Proxmox management
+- ***NFS for flexibility***: File-level sharing
+- ***iSCSI for performance***: Block-level access
+- ***Hybrid approaches***: Using both protocols
+
+* Search and Navigation Tips
+
+** Finding Information
+
+1. ***Start with overview***: Begin at [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]]
+2. ***Follow cross-references***: Each document links to related topics
+3. ***Use Org mode search***: =C-c / r= for regex search in Emacs
+4. ***Check TODO sections***: Find areas for further exploration
+
+** Org Mode Navigation
+
+If viewing in Emacs:
+- =TAB= on heading to expand/collapse
+- =C-c C-n= / =C-c C-p= for next/previous heading
+- =C-c C-f= / =C-c C-b= for forward/backward same level
+- =C-c C-j= to jump to heading
+- =C-c C-o= to follow links
+
+* Conventions Used
+
+** Link Format
+
+All cross-references use Org mode file links:
+#+BEGIN_SRC org
+[[file:filename.org][Link Text]]
+#+END_SRC
+
+** Code Blocks
+
+All code examples specify language:
+#+BEGIN_SRC org
+#+BEGIN_SRC bash
+# Bash commands here
+#+END_SRC
+#+END_SRC
+
+** Tables
+
+Configuration comparisons and reference data in Org tables:
+#+BEGIN_SRC org
+| Column 1 | Column 2 |
+|----------+----------|
+| Data 1   | Data 2   |
+#+END_SRC
+
+** TODO Items
+
+Actionable items marked with TODO keyword:
+#+BEGIN_SRC org
+* TODO Tasks
+- TODO Item to complete
+#+END_SRC
+
+* Contributing and Updates
+
+This documentation is extracted from actual conversations and real-world problem-solving. As new conversations occur and knowledge is gained, new documentation files will be added and existing ones updated.
+
+** Documentation Standards
+
+All documentation follows these principles:
+1. Org mode format (not Markdown)
+2. Focused topic scope (3-15KB per file)
+3. Extensive cross-referencing
+4. Practical examples and commands
+5. Clear section structure
+6. Troubleshooting sections
+7. Related topics links
+8. TODO items for follow-up
+
+* Related Documentation in Repository
+
+This repository also contains documentation on other topics:
+
+** NLP and Semantic Processing
+
+- Multi-format document processing
+- Hierarchical document chunking
+- Semantic search with embeddings
+- ChromaDB integration
+
+** Development Tools
+
+- Claude Code integration and workflows
+- Emacs configuration and packages
+- Development tool installation strategies
+
+** Distributed Computing
+
+- Ray framework fundamentals
+- GPU configuration and memory management
+- Distributed inference setups
+
+* License and Attribution
+
+Documentation created by Claude (Anthropic) based on conversations and technical knowledge.
+Generated: 2025-11-09
+
+* Feedback and Issues
+
+For issues or suggestions about this documentation:
+- Check existing documentation for answers
+- Review cross-referenced materials
+- Consider if topic needs new focused document
+
+* Version History
+
+- 2025-11-09: Initial TrueNAS-Proxmox integration documentation suite created
+  - 7 comprehensive documents covering storage integration
+  - Complete coverage of NFS and iSCSI protocols
+  - ZFS capacity management and provisioning best practices
+  - Network configuration and optimization guides

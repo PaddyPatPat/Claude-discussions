@@ -1,0 +1,652 @@
+#+TITLE: ZFS Storage Provisioning Types
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: zfs storage provisioning truenas iscsi
+
+* Overview
+
+When creating iSCSI extents or ZFS volumes in TrueNAS, you must choose how space is allocated. Understanding the difference between thick provisioning, thin provisioning, device extents, and file extents is critical for proper capacity planning and performance.
+
+This guide explains these concepts and helps you choose the right option for your use case.
+
+* Provisioning Types: Thick vs Thin
+
+** Thick Provisioning
+
+*** What It Is
+
+Space is fully allocated and reserved immediately when the volume/extent is created.
+
+***Characteristics***
+- Full space reserved upfront
+- Cannot be reclaimed by pool until volume deleted
+- Pre-allocated blocks
+- Space shows as "used" in pool immediately
+
+***Example***
+#+BEGIN_SRC
+Create 2.8 TiB thick provisioned extent:
+- Pool immediately reserves 2.8 TiB + overhead
+- Shows ~3.4 TiB used (with ZFS overhead)
+- Available even if no data written
+- Cannot be used for other purposes
+#+END_SRC
+
+** Thin Provisioning (Sparse)
+
+*** What It Is
+
+Space is allocated only as data is actually written to the volume/extent.
+
+***Characteristics***
+- Minimal initial allocation
+- Grows as data written
+- Space reclaimed when data deleted (with TRIM/discard)
+- Allows oversubscription
+
+***Example***
+#+BEGIN_SRC
+Create 2.8 TiB thin provisioned extent:
+- Pool shows minimal usage initially
+- Grows as Proxmox writes data
+- Could create multiple extents totaling > pool size
+- Must monitor actual usage
+#+END_SRC
+
+** Comparison Table
+
+| Feature | Thick Provisioning | Thin Provisioning |
+|---------+--------------------+-------------------|
+| Initial allocation | Full size | Minimal |
+| Space guarantee | Yes | No |
+| Oversubscription | Not possible | Possible |
+| Complexity | Simple | Requires monitoring |
+| Performance | Slightly better | Good |
+| Flexibility | Low | High |
+| Risk | Low | Can overfill if not monitored |
+| Best for | Predictable workloads | Dynamic environments |
+
+* Thick Provisioning Deep Dive
+
+** How It Works
+
+When creating thick provisioned volume:
+
+1. ZFS allocates all blocks immediately
+2. Reserves metadata structures
+3. Initializes volume structure
+4. Marks space as unavailable to pool
+
+** ZFS Overhead with Thick Provisioning
+
+Important realization from conversation:
+
+***Requested size ≠ Actual allocation***
+
+#+BEGIN_SRC
+Example from conversation:
+Volume size requested: 2.8 TiB
+Total allocation actual: 3.4 TiB
+Overhead: ~600 GiB (21%)
+#+END_SRC
+
+***What causes overhead?***
+
+1. ***Volblocksize allocation***
+   - ZFS allocates in blocks (default 8K)
+   - Rounds up to block boundaries
+   - Larger volblocksize = more overhead
+
+2. ***Metadata***
+   - Block pointers
+   - Checksums (sha256 default)
+   - Timestamps and attributes
+
+3. ***Indirect blocks***
+   - For large volumes
+   - Multiple indirection levels
+   - Each level adds overhead
+
+4. ***ZFS internal structures***
+   - Space map
+   - Allocation bitmaps
+   - Dataset metadata
+
+** Calculating Real Allocation
+
+To predict actual pool usage with thick provisioning:
+
+#+BEGIN_SRC
+Estimated Total Allocation = Requested Size × 1.20
+
+For 2.8 TiB extent:
+Estimated allocation: 2.8 × 1.20 = 3.36 TiB
+Actual (from conversation): 3.4 TiB
+Overhead: ~20%
+#+END_SRC
+
+This matches the conversation's example closely!
+
+** Advantages of Thick Provisioning
+
+***Predictability***
+- Know exactly how much space committed
+- No surprise pool full errors
+- Guaranteed space for extent
+
+***Performance***
+- Slightly faster initial writes
+- No allocation overhead during writes
+- More contiguous blocks
+
+***Simplicity***
+- No need to monitor actual usage
+- Clear capacity planning
+- No oversubscription complexity
+
+** Disadvantages of Thick Provisioning
+
+***Inflexibility***
+- Cannot oversubscribe
+- Wasted space if extent not fully used
+- Difficult to reclaim unused space
+
+***Significant overhead***
+- 15-25% overhead in pool usage
+- Must account for in capacity planning
+- Can surprise users (like conversation example)
+
+***Pool space locked***
+- Space unavailable until extent deleted
+- Cannot repurpose without destruction
+
+** Best Use Cases
+
+Use thick provisioning when:
+- Production environments requiring guarantees
+- Predictable, known space requirements
+- Cannot risk out-of-space errors
+- Simplicity over flexibility preferred
+
+* Thin Provisioning Deep Dive
+
+** How It Works
+
+When creating thin/sparse provisioned volume:
+
+1. ZFS creates volume metadata structure
+2. Allocates minimal initial blocks
+3. Grows allocation as data written
+4. Can deallocate with TRIM/discard support
+
+** Space Allocation Behavior
+
+***Initial state***
+#+BEGIN_SRC
+Create 2.8 TiB thin extent:
+Pool usage: ~10-50 GiB (metadata only)
+Available: Still ~3.4 TiB
+#+END_SRC
+
+***After 500 GB written***
+#+BEGIN_SRC
+Pool usage: ~500 GB + metadata
+Available: ~2.9 TiB
+#+END_SRC
+
+***With TRIM/discard***
+#+BEGIN_SRC
+Delete 200 GB of data
+Pool usage drops: ~300 GB + metadata
+Available increases: ~3.1 TiB
+#+END_SRC
+
+** Oversubscription
+
+Thin provisioning allows creating more allocated space than physically exists:
+
+***Example***
+#+BEGIN_SRC
+Pool size: 3.5 TiB
+Could create:
+- Extent 1: 2.8 TiB (thin)
+- Extent 2: 2.8 TiB (thin)
+- Extent 3: 2.8 TiB (thin)
+Total allocated: 8.4 TiB
+Actual usage: Only what's written
+#+END_SRC
+
+***Critical requirement***
+Must monitor actual usage and ensure total real usage stays under 80% (2.8 TiB)!
+
+** Advantages of Thin Provisioning
+
+***Flexibility***
+- Allocate more than physical capacity
+- Grow storage organically
+- Reclaim deleted space
+
+***Efficiency***
+- No wasted space
+- Pay only for what you use
+- Better utilization
+
+***Lower overhead***
+- Minimal initial pool impact
+- Overhead grows with data
+
+** Disadvantages of Thin Provisioning
+
+***Complexity***
+- Must monitor actual usage
+- Risk of pool full if not careful
+- Requires active management
+
+***Out-of-space risk***
+- Can fill pool unexpectedly
+- Multiple thin volumes competing
+- Requires alerts and monitoring
+
+***TRIM/discard required***
+- For space reclamation
+- Must be configured properly
+- Not all systems support well
+
+** Best Use Cases
+
+Use thin provisioning when:
+- Development/testing environments
+- Variable or unpredictable usage
+- Want to oversubscribe capacity
+- Have good monitoring in place
+- Storage efficiency important
+
+* Extent Types: Device vs File
+
+Independent of thick/thin, iSCSI extents can be device or file-based.
+
+** Device Extents (ZVol)
+
+*** What It Is
+
+Uses ZFS volume (zvol) - a block device within ZFS.
+
+***Characteristics***
+- ZFS manages as block device
+- Appears as /dev/zvol/poolname/volumename
+- Native ZFS volume
+- Block-level operations
+
+***Structure***
+#+BEGIN_SRC
+ZFS Pool
+└── zvol (volume)
+    └── Presented as iSCSI LUN
+        └── Proxmox sees as block device
+#+END_SRC
+
+** File Extents
+
+*** What It Is
+
+Regular file stored on ZFS dataset.
+
+***Characteristics***
+- File in ZFS filesystem
+- Stored like any other file
+- Easier to manipulate/backup
+- File-level operations
+
+***Structure***
+#+BEGIN_SRC
+ZFS Pool
+└── Dataset (filesystem)
+    └── File (extent)
+        └── Presented as iSCSI LUN
+            └── Proxmox sees as block device
+#+END_SRC
+
+** Device vs File Comparison
+
+| Feature | Device (zvol) | File |
+|---------+---------------+------|
+| Performance | Better | Good |
+| Recommended for VMs | Yes | Acceptable |
+| Easy to backup | Harder | Easier |
+| Flexibility | Less | More |
+| ZFS integration | Native | Via filesystem |
+| Overhead | Lower | Slightly higher |
+| Best for | Production VM disks | Testing, flexibility |
+
+** How Provisioning Applies
+
+Both device and file extents can be:
+- Thick provisioned
+- Thin provisioned
+
+***Device extent examples***
+#+BEGIN_SRC bash
+# Thick device extent
+zfs create -V 2.8T poolname/extent1
+
+# Thin device extent
+zfs create -s -V 2.8T poolname/extent1
+#          ^---- sparse flag
+#+END_SRC
+
+***File extent examples***
+- Thick: Pre-allocated file
+- Thin: Sparse file that grows
+
+* Choosing the Right Combination
+
+** Decision Matrix
+
+| Use Case | Extent Type | Provisioning | Reason |
+|----------+-------------+--------------+--------|
+| Production VM disks | Device | Thick | Performance + predictability |
+| Development VMs | Device | Thin | Flexibility + efficiency |
+| Testing/lab | File | Thin | Easy management |
+| High-performance DB | Device | Thick | Maximum performance |
+| Backup target | File | Thin | Easy to manage |
+| Critical storage | Device | Thick | Guaranteed space |
+
+** Recommendation for Proxmox
+
+***General guidance:***
+
+1. ***VM disk storage (primary use):***
+   - Type: Device (zvol)
+   - Provisioning: Thin
+   - Reason: Good performance, flexible growth
+
+2. ***Production VMs (critical):***
+   - Type: Device (zvol)
+   - Provisioning: Thick
+   - Reason: Guaranteed space, maximum performance
+
+3. ***Testing/development:***
+   - Type: Device or File
+   - Provisioning: Thin
+   - Reason: Flexibility, easy management
+
+4. ***Backup storage:***
+   - Use NFS instead of iSCSI
+   - See [[file:truenas-nfs-proxmox-integration.org][NFS integration guide]]
+
+* Practical Examples
+
+** Example 1: Conservative Production Setup
+
+***Scenario:*** 4 TiB pool, need reliable VM storage
+
+#+BEGIN_SRC
+Pool: 4 TiB
+Safe allocation (80%): 3.2 TiB
+Provisioning: Thick
+Type: Device
+Accounting for overhead (20%): 3.2 / 1.20 = 2.67 TiB
+
+Create extent: 2.67 TiB thick device extent
+Result: ~3.2 TiB actual pool usage
+Remaining: ~0.8 TiB (20% free)
+Status: Safe, predictable
+#+END_SRC
+
+** Example 2: Flexible Development Setup
+
+***Scenario:*** 4 TiB pool, multiple dev VMs, variable usage
+
+#+BEGIN_SRC
+Pool: 4 TiB
+Safe actual usage (80%): 3.2 TiB
+Provisioning: Thin
+Type: Device
+
+Create extents:
+- dev-vm-1: 2 TiB thin
+- dev-vm-2: 2 TiB thin
+- dev-vm-3: 2 TiB thin
+Total allocated: 6 TiB
+Actual usage monitored: Keep under 3.2 TiB
+
+Status: Flexible, requires monitoring
+#+END_SRC
+
+** Example 3: Mixed Environment
+
+***Scenario:*** 4 TiB pool, production + development
+
+#+BEGIN_SRC
+Pool: 4 TiB
+Safe allocation: 3.2 TiB
+
+Production VM:
+- Type: Device
+- Provisioning: Thick
+- Size: 1.5 TiB
+- Actual allocation: ~1.8 TiB
+
+Development VMs:
+- Type: Device
+- Provisioning: Thin
+- Allocated: 3× 1 TiB = 3 TiB
+- Actual usage: ~1.2 TiB
+
+Total actual usage: ~3.0 TiB (75%)
+Status: Safe, balanced approach
+#+END_SRC
+
+* Monitoring Provisioned Storage
+
+** In TrueNAS Web Interface
+
+***For Device Extents (zvols)***
+
+Navigate to: Storage → Pools → [Pool Name]
+
+Look for zvol entries:
+- Volume size: What you requested
+- Total allocation: Actual space used
+- Space available: Pool free space
+- Provisioning type: Thick or thin/sparse
+
+***Key metrics***
+#+BEGIN_SRC
+ZVOL Space Management section shows:
+- Provisioning type: Thick/Thin
+- Volume size: Allocated size
+- Total allocation: Real pool usage
+- Space available to zvol: Free pool space
+#+END_SRC
+
+** Command Line Monitoring
+
+#+BEGIN_SRC bash
+# List all volumes with detailed info
+zfs list -t volume -o name,volsize,used,avail,refer
+
+# Check if volume is sparse (thin)
+zfs get volsize,refreservation poolname/volumename
+
+# If refreservation = none → thin provisioning
+# If refreservation = volsize → thick provisioning
+
+# Check actual space usage
+zfs list -o space
+
+# Monitor pool usage
+zpool list
+#+END_SRC
+
+** Setting Up Alerts
+
+Configure alerts for:
+- Pool capacity exceeds 70%
+- Thin volumes approaching allocated size
+- Rapid growth in usage
+- Pool fragmentation
+
+* Converting Between Provisioning Types
+
+** Thick to Thin (zvol)
+
+***Cannot convert directly***
+
+Must:
+1. Create new thin-provisioned zvol
+2. Copy data from thick to thin volume
+3. Reconfigure to use new volume
+4. Delete old thick volume
+
+#+BEGIN_SRC bash
+# Example process
+# 1. Create thin volume
+zfs create -s -V 2.8T poolname/new-thin-volume
+
+# 2. Copy data (example with dd)
+dd if=/dev/zvol/poolname/old-thick of=/dev/zvol/poolname/new-thin-volume bs=1M
+
+# 3. Reconfigure iSCSI extent to use new volume
+# 4. Delete old volume
+zfs destroy poolname/old-thick-volume
+#+END_SRC
+
+** Thin to Thick (zvol)
+
+***Cannot convert directly***
+
+Similar process:
+1. Create thick-provisioned zvol
+2. Copy data
+3. Reconfigure
+4. Delete thin volume
+
+** Important Considerations
+
+***Downtime required***
+- VMs must be stopped
+- Data migration takes time
+- Plan maintenance window
+
+***Data integrity***
+- Verify copies
+- Test before deleting original
+- Have backups
+
+* Troubleshooting
+
+** Problem: Pool Shows 97% Full After Creating 80% Extent
+
+From the conversation example:
+
+***Symptoms***
+- Created 2.8 TiB extent (80% of 3.5 TiB pool)
+- Pool shows 97.1% usage
+- Expected ~80%, got 97%
+
+***Root cause***
+- Used thick provisioning
+- Total allocation (3.4 TiB) includes ~20% overhead
+- 3.4 / 3.5 = 97.1%
+
+***Solutions***
+
+1. ***Reduce extent size***
+   #+BEGIN_SRC
+   Delete extent
+   Calculate: 3.5 × 0.80 / 1.20 = 2.33 TiB
+   Create: 2.33 TiB extent
+   Result: ~2.8 TiB allocation = 80% of pool
+   #+END_SRC
+
+2. ***Switch to thin provisioning***
+   #+BEGIN_SRC
+   Delete thick extent
+   Create thin extent: 2.8 TiB
+   Initial usage: Minimal
+   Monitor actual usage stays under 2.8 TiB
+   #+END_SRC
+
+** Problem: Thin Volume Fills Pool Unexpectedly
+
+***Symptoms***
+- Created thin volumes totaling more than pool
+- Pool suddenly full
+- Writes failing
+
+***Solutions***
+
+1. ***Immediate: Free space***
+   - Delete snapshots
+   - Remove old data
+   - Stop writes to pool
+
+2. ***Short-term: Reduce allocations***
+   - Reduce number of thin volumes
+   - Delete unused extents
+   - Clean up old data
+
+3. ***Long-term: Better monitoring***
+   - Set up capacity alerts
+   - Monitor actual usage trends
+   - Plan expansion proactively
+
+** Problem: Cannot Determine Provisioning Type
+
+***Check in TrueNAS***
+
+1. Storage → Pools → [Pool] → Look at volumes
+2. Check "ZVOL Space Management" section
+3. Shows "Provisioning type: Thick" or includes "sparse"
+
+***Check via CLI***
+
+#+BEGIN_SRC bash
+# Check refreservation property
+zfs get refreservation poolname/volumename
+
+# none = thin provisioning
+# <size> matching volsize = thick provisioning
+#+END_SRC
+
+* Best Practices Summary
+
+** For Production Environments
+
+1. ***Use device extents*** for performance
+2. ***Use thick provisioning*** for predictability
+3. ***Account for 20% overhead*** in planning
+4. ***Monitor pool capacity*** regularly
+5. ***Plan expansion at 70%*** usage
+
+** For Development/Testing
+
+1. ***Use device extents*** (or file if preferred)
+2. ***Use thin provisioning*** for flexibility
+3. ***Monitor actual usage*** closely
+4. ***Set up alerts*** at 70% and 80%
+5. ***Can oversubscribe*** carefully
+
+** Universal Best Practices
+
+1. ***Always follow 80% rule*** (see [[file:zfs-capacity-management-best-practices.org][capacity management]])
+2. ***Verify pool usage after creation***
+3. ***Test before deploying to production***
+4. ***Document your choices***
+5. ***Have backups*** before making changes
+
+* Related Topics
+
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]]
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration Guide]]
+- [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]]
+- [[file:truenas-proxmox-storage-overview.org][Storage Integration Overview]]
+
+* TODO Tasks
+
+- TODO Document zvol migration procedures in detail
+- TODO Create monitoring script for thin-provisioned volumes
+- TODO Add performance benchmarking for thick vs thin
+- TODO Document TRIM/discard configuration for thin volumes
+- TODO Create capacity planning calculator tool

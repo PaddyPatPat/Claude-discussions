@@ -1,0 +1,682 @@
+#+TITLE: TrueNAS-Proxmox Network Configuration
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: truenas proxmox networking vlan ipv6
+
+* Overview
+
+When running TrueNAS as a VM inside Proxmox to serve storage to other VMs, network configuration is critical for performance, security, and accessibility. This guide covers network configuration options, dual-stack IPv4/IPv6 considerations, and optimization techniques.
+
+* Network Architecture Scenarios
+
+** Scenario 1: Single Bridged Network (Simplest)
+
+***Topology***
+#+BEGIN_SRC
+Physical Network (192.168.1.0/24)
+    |
+    |--- Proxmox Host (192.168.1.10)
+    |       |
+    |       |--- TrueNAS VM (192.168.1.50)
+    |       |--- Client VM 1 (192.168.1.51)
+    |       |--- Client VM 2 (192.168.1.52)
+#+END_SRC
+
+***Characteristics***
+- All VMs on same bridge (vmbr0 typically)
+- TrueNAS gets IP on physical network
+- Simple routing
+- Easy to access from anywhere
+
+***Advantages***
+- Simplest setup
+- TrueNAS accessible like physical appliance
+- Easy troubleshooting
+- Can access from other physical hosts
+
+***Disadvantages***
+- Storage traffic shares network with other traffic
+- No isolation
+- Potential performance impact from network congestion
+- Security: storage exposed on main network
+
+***Best for***
+- Home labs
+- Small environments
+- Simple setups
+- Testing and development
+
+** Scenario 2: Dedicated Storage Network (Recommended)
+
+***Topology***
+#+BEGIN_SRC
+Management Network (192.168.1.0/24)
+    |--- Proxmox Host mgmt (192.168.1.10)
+    |--- TrueNAS VM mgmt (192.168.1.50)
+    |--- Client VMs mgmt
+
+Storage Network (10.0.100.0/24) - Internal or VLAN
+    |--- Proxmox Host storage (10.0.100.10)
+    |--- TrueNAS VM storage (10.0.100.50)
+    |--- Client VMs storage
+#+END_SRC
+
+***Characteristics***
+- TrueNAS has two network interfaces
+- One for management
+- One dedicated for storage traffic
+- Storage network can be:
+  - Internal Proxmox network (vmbr1)
+  - VLAN on physical network
+  - Separate physical network
+
+***Advantages***
+- Storage traffic isolated
+- Better performance
+- Better security
+- Dedicated bandwidth for storage
+
+***Disadvantages***
+- More complex configuration
+- Requires additional network interface
+- More planning required
+
+***Best for***
+- Production environments
+- Performance-sensitive workloads
+- Security-conscious deployments
+- Larger installations
+
+** Scenario 3: Internal-Only Storage Network
+
+***Topology***
+#+BEGIN_SRC
+Physical Network (Management only)
+    |--- Proxmox Host (192.168.1.10)
+
+Internal Proxmox Network (Storage only, no external routing)
+    |--- TrueNAS VM (10.0.100.50)
+    |--- Client VMs (10.0.100.51, .52, .53...)
+#+END_SRC
+
+***Characteristics***
+- Storage network completely internal
+- No routing to physical network
+- Maximum isolation
+- Lowest latency (no physical switches)
+
+***Advantages***
+- Maximum security (storage not on physical network)
+- Lowest latency
+- No physical switch overhead
+- Dedicated Proxmox-only network
+
+***Disadvantages***
+- Cannot access storage from outside Proxmox
+- More complex for mixed environments
+- TrueNAS management needs separate interface
+
+***Best for***
+- Security-critical environments
+- Maximum performance requirements
+- Isolated storage architecture
+
+* Network Interface Configuration
+
+** TrueNAS VM Network Interface Setup
+
+*** Single Interface Configuration
+
+In Proxmox, edit TrueNAS VM:
+
+#+BEGIN_SRC
+Hardware → Network Device:
+- Bridge: vmbr0
+- Model: VirtIO (paravirtualized)
+- Firewall: Optional
+- MAC address: Auto or specify
+#+END_SRC
+
+***In TrueNAS:***
+1. Network → Interfaces
+2. Configure interface with static IP
+3. Set gateway and DNS
+4. Save and test
+
+*** Dual Interface Configuration
+
+****In Proxmox, add two network devices:****
+
+#+BEGIN_SRC
+Network Device 1 (Management):
+- Bridge: vmbr0 (physical network)
+- Model: VirtIO
+- Purpose: Management, web UI access
+
+Network Device 2 (Storage):
+- Bridge: vmbr1 (storage network)
+- Model: VirtIO
+- Purpose: NFS/iSCSI traffic
+#+END_SRC
+
+****In TrueNAS:****
+
+1. Network → Interfaces
+2. Configure both interfaces:
+
+***Management interface (vtnet0):***
+- IP: 192.168.1.50/24
+- Gateway: 192.168.1.1
+- DNS: 192.168.1.1 or public DNS
+
+***Storage interface (vtnet1):***
+- IP: 10.0.100.50/24
+- No gateway (storage-only network)
+- No DNS needed
+
+3. Set default route via management interface
+4. Configure static routes if needed
+
+** VirtIO Network Adapter (Critical)
+
+***Always use VirtIO*** for network adapters!
+
+***Why VirtIO?***
+- Paravirtualized driver
+- Much better performance than e1000
+- Lower CPU overhead
+- Higher throughput
+- Lower latency
+
+***Performance comparison:***
+| Adapter Type | Throughput | CPU Usage | Latency |
+|--------------+------------+-----------+---------|
+| VirtIO | ~10 Gbps | Low | Lowest |
+| e1000 | ~1 Gbps | High | Higher |
+| rtl8139 | <100 Mbps | High | Highest |
+
+***Configuration:***
+
+In Proxmox VM hardware settings:
+- Model: VirtIO (paravirtualized)
+- NOT e1000, rtl8139, or other emulated adapters
+
+** Client VM Network Configuration
+
+For VMs accessing TrueNAS storage:
+
+***Single network (simple):***
+- Same bridge as TrueNAS
+- Can access via TrueNAS IP
+
+***Dual network (dedicated storage):***
+- Management: vmbr0
+- Storage: vmbr1
+- Access TrueNAS via storage network IP
+
+* IPv4 and IPv6 Dual-Stack Configuration
+
+** Understanding IPv4/IPv6 on Network Interfaces
+
+Modern networks may have both:
+- IPv4 address (e.g., 192.168.1.50)
+- IPv6 address (e.g., 2001:db8::50 or fe80::...)
+
+** Portal IP Configuration for iSCSI
+
+When configuring iSCSI portal, choose:
+
+*** Option 1: 0.0.0.0 (All IPv4 Interfaces) - Recommended
+
+***Behavior:***
+- Binds to all IPv4 interfaces
+- Most compatible
+- Proxmox default uses IPv4 for iSCSI
+
+***Use when:***
+- Want maximum IPv4 compatibility
+- Proxmox hosts using IPv4
+- Simplest configuration
+
+*** Option 2: Specific IPv4 Address
+
+***Behavior:***
+- Binds to one specific IPv4 address
+- Explicit control
+- Must be reachable from Proxmox
+
+***Example:***
+- Portal IP: 192.168.1.50 (management)
+- Or: 10.0.100.50 (storage network)
+
+***Use when:***
+- Single interface or want explicit binding
+- Security: limit which interface serves iSCSI
+
+*** Option 3: :: (All IPv6 Interfaces)
+
+***Behavior:***
+- Binds to all IPv6 interfaces
+- May accept IPv4 connections (dual-stack)
+- Depends on OS IPv6 configuration
+
+***Use when:***
+- IPv6-primary network
+- Testing IPv6 connectivity
+- Modern infrastructure
+
+*** Option 4: Multiple Portals
+
+Create separate portals for IPv4 and IPv6:
+
+****Portal 1:****
+- IP: 0.0.0.0
+- Purpose: IPv4 access
+
+****Portal 2:****
+- IP: ::
+- Purpose: IPv6 access
+
+***Use when:***
+- Need explicit dual-stack support
+- Want to test both protocols
+- Advanced configurations
+
+** Recommendation for Most Users
+
+Start with ***0.0.0.0*** because:
+
+1. Proxmox typically uses IPv4 for iSCSI by default
+2. Most compatible
+3. Simplest to configure and troubleshoot
+4. Can add IPv6 later if needed
+
+** NFS and IPv4/IPv6
+
+NFS automatically handles both:
+- Listens on all interfaces by default
+- Supports both IPv4 and IPv6 clients
+- No special portal configuration needed
+
+* Network Performance Optimization
+
+** MTU Configuration (Jumbo Frames)
+
+***What is MTU?***
+- Maximum Transmission Unit
+- Size of largest network packet
+- Standard: 1500 bytes
+- Jumbo: 9000 bytes
+
+***Benefits of jumbo frames:***
+- Fewer packets for same data
+- Lower overhead
+- Better throughput
+- Lower CPU usage
+
+***Requirements:***
+- ***Must be consistent across entire path***
+- TrueNAS VM interface
+- Proxmox bridge
+- Physical switch
+- Client VMs
+- All must support MTU 9000
+
+***Configuration:***
+
+****In Proxmox (on host):****
+
+#+BEGIN_SRC bash
+# Edit network configuration
+nano /etc/network/interfaces
+
+# Example:
+auto vmbr1
+iface vmbr1 inet static
+    address 10.0.100.10
+    netmask 255.255.255.0
+    bridge-ports eth1
+    bridge-stp off
+    bridge-fd 0
+    mtu 9000
+
+# Apply changes
+ifreload -a
+#+END_SRC
+
+****In TrueNAS VM:****
+
+1. Network → Interfaces
+2. Edit interface
+3. MTU: 9000
+4. Save and test
+
+****In client VMs:****
+
+#+BEGIN_SRC bash
+# Linux example
+ip link set eth1 mtu 9000
+
+# Permanent (depends on distro)
+# Debian/Ubuntu: /etc/network/interfaces
+# RHEL/CentOS: /etc/sysconfig/network-scripts/ifcfg-eth1
+#+END_SRC
+
+***Testing jumbo frames:***
+
+#+BEGIN_SRC bash
+# From Proxmox host to TrueNAS
+ping -M do -s 8972 10.0.100.50
+
+# -M do: Don't fragment
+# -s 8972: 9000 - 28 (IP+ICMP headers)
+# Should succeed with jumbo frames
+# Will fail if MTU 1500 anywhere in path
+#+END_SRC
+
+** Network Bandwidth Allocation
+
+*** In Proxmox
+
+Limit or guarantee bandwidth per VM:
+
+#+BEGIN_SRC bash
+# In VM network device configuration
+rate: 1000  # Limit to 1000 MB/s
+# Or unlimited for storage network
+#+END_SRC
+
+*** Quality of Service (QoS)
+
+If sharing network:
+- Prioritize storage traffic
+- Configure on network switches
+- VLAN-based QoS
+- Ensure iSCSI/NFS traffic prioritized
+
+* VLAN Configuration
+
+For network segmentation without separate physical networks:
+
+** VLAN Architecture Example
+
+#+BEGIN_SRC
+Physical Network Interface
+    |
+    |--- VLAN 1 (Management): 192.168.1.0/24
+    |--- VLAN 100 (Storage): 10.0.100.0/24
+    |--- VLAN 200 (Backup): 10.0.200.0/24
+#+END_SRC
+
+** VLAN Configuration in Proxmox
+
+***Create VLAN-aware bridge:***
+
+#+BEGIN_SRC bash
+# /etc/network/interfaces
+
+auto vmbr0
+iface vmbr0 inet manual
+    bridge-ports eth0
+    bridge-stp off
+    bridge-fd 0
+    bridge-vlan-aware yes
+    bridge-vids 2-4094
+#+END_SRC
+
+***Assign VLAN to VM:***
+
+In VM network device:
+- Bridge: vmbr0
+- VLAN Tag: 100 (for storage)
+
+** VLAN Configuration in TrueNAS
+
+TrueNAS interface shows as VLAN interface:
+- Example: vtnet0.100 (VLAN 100 on vtnet0)
+- Configure IP on VLAN interface
+- Routing as needed
+
+* Firewall Configuration
+
+** TrueNAS Firewall Rules
+
+If TrueNAS firewall enabled:
+
+***Allow NFS:***
+- Port 2049 TCP/UDP (NFSv4)
+- Port 111 TCP/UDP (portmapper)
+- Ports 32765-32768 TCP/UDP (NFSv3)
+- Source: Proxmox network
+
+***Allow iSCSI:***
+- Port 3260 TCP
+- Source: Proxmox network
+
+***Allow management:***
+- Port 443 TCP (web UI)
+- Port 22 TCP (SSH)
+- Source: Management network only
+
+** Proxmox Firewall
+
+If using Proxmox firewall:
+- Generally allow outgoing connections
+- No special rules needed for storage client
+- Can restrict by VM if desired
+
+** Example TrueNAS Firewall Rules
+
+#+BEGIN_SRC
+Rule 1: Allow iSCSI from storage network
+- Action: Allow
+- Protocol: TCP
+- Port: 3260
+- Source: 10.0.100.0/24
+
+Rule 2: Allow NFS from storage network
+- Action: Allow
+- Protocol: TCP/UDP
+- Port: 2049
+- Source: 10.0.100.0/24
+
+Rule 3: Allow management from mgmt network
+- Action: Allow
+- Protocol: TCP
+- Port: 22, 443
+- Source: 192.168.1.0/24
+
+Rule 4: Default deny
+- Action: Deny
+- All other traffic
+#+END_SRC
+
+* Troubleshooting Network Issues
+
+** Cannot Reach TrueNAS
+
+***Check connectivity:***
+
+#+BEGIN_SRC bash
+# From Proxmox host
+ping <truenas-ip>
+
+# If fails:
+# - Check TrueNAS VM is running
+# - Check network cable/link
+# - Check bridge configuration
+# - Check IP configuration in TrueNAS
+#+END_SRC
+
+***Check interface status:***
+
+#+BEGIN_SRC bash
+# In TrueNAS (console or SSH)
+ifconfig
+
+# Check interface up and has IP
+# Look for: UP,RUNNING,MULTICAST
+#+END_SRC
+
+** Slow Performance
+
+***Diagnostics:***
+
+#+BEGIN_SRC bash
+# Test network throughput
+iperf3 -s  # On TrueNAS
+iperf3 -c <truenas-ip>  # On Proxmox/client VM
+
+# Should see:
+# ~10 Gbps with 10GbE
+# ~1 Gbps with GbE
+# Much less indicates problem
+#+END_SRC
+
+***Common causes:***
+1. Not using VirtIO adapter
+2. MTU mismatch
+3. Network congestion
+4. Insufficient TrueNAS CPU/RAM
+5. Proxmox host overload
+
+***Solutions:***
+1. Switch to VirtIO adapter
+2. Enable jumbo frames (9000 MTU)
+3. Dedicate network for storage
+4. Increase TrueNAS resources
+5. Review host utilization
+
+** Connection Drops
+
+***Check for:***
+- Network cable issues
+- Switch port errors
+- Proxmox bridge errors
+- TrueNAS VM resource starvation
+
+***Monitoring:***
+
+#+BEGIN_SRC bash
+# Check interface errors
+ifconfig <interface>
+# Look for: errors, dropped packets
+
+# Check system logs
+dmesg | grep -i network
+journalctl -u networking
+
+# In TrueNAS
+# System → Reporting → Interface statistics
+#+END_SRC
+
+** IPv6 Issues
+
+***If IPv6 causing problems:***
+
+Option 1: Disable IPv6 in TrueNAS
+Option 2: Ensure IPv6 properly configured
+Option 3: Use IPv4-only configuration
+
+#+BEGIN_SRC bash
+# Test IPv4 specifically
+ping -4 <truenas-ip>
+
+# Test IPv6 specifically
+ping -6 <truenas-ipv6>
+#+END_SRC
+
+* Best Practices
+
+** Network Design
+
+1. ***Use VirtIO adapters always***
+2. ***Dedicated storage network for production***
+3. ***Enable jumbo frames if possible***
+4. ***Separate management from storage traffic***
+5. ***Use VLANs for segmentation***
+
+** Performance
+
+1. ***10GbE for high-performance needs***
+2. ***Multiple network paths for redundancy***
+3. ***Monitor network utilization***
+4. ***Tune based on workload***
+
+** Security
+
+1. ***Firewall rules restricting storage access***
+2. ***Separate storage VLAN***
+3. ***Disable unused network services***
+4. ***Regular security updates***
+5. ***Monitor for unauthorized access***
+
+** Monitoring
+
+1. ***Set up bandwidth monitoring***
+2. ***Alert on interface errors***
+3. ***Track network latency***
+4. ***Monitor connection drops***
+
+* Advanced Topics
+
+** Link Aggregation (LAGG/Bonding)
+
+For redundancy and/or increased bandwidth:
+
+***In Proxmox:***
+- Bond physical interfaces
+- Create bridge on bond
+- Assign to VMs
+
+***In TrueNAS:***
+- Create LAGG interface
+- Multiple network devices from VM
+- Configure bonding mode (LACP, etc.)
+
+***Use cases:***
+- Redundancy (active-backup)
+- Bandwidth (LACP/802.3ad)
+- Both (mode dependent)
+
+** Multipath I/O
+
+For iSCSI redundancy:
+
+- Multiple network paths to TrueNAS
+- Automatic failover
+- Load balancing
+- Increased reliability
+
+***Configuration:***
+- Multiple iSCSI portals
+- Multiple network interfaces
+- Multipath configuration in Proxmox
+
+** Network Monitoring Tools
+
+***Built-in:***
+- TrueNAS Reporting
+- Proxmox network graphs
+- Interface statistics
+
+***External:***
+- Prometheus + Grafana
+- SNMP monitoring
+- Zabbix
+- Custom scripts
+
+* Related Topics
+
+- [[file:truenas-proxmox-storage-overview.org][TrueNAS-Proxmox Storage Integration Overview]]
+- [[file:truenas-nfs-proxmox-integration.org][NFS Integration Guide]]
+- [[file:truenas-iscsi-proxmox-integration.org][iSCSI Integration Guide]]
+- [[file:truenas-iscsi-configuration-reference.org][iSCSI Configuration Reference]]
+
+* TODO Tasks
+
+- TODO Document LAGG/bonding configuration in detail
+- TODO Add multipath I/O configuration guide
+- TODO Create network performance benchmarking procedures
+- TODO Document VLAN configuration examples
+- TODO Add monitoring setup guide with Prometheus/Grafana

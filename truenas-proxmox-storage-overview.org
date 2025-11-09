@@ -1,0 +1,221 @@
+#+TITLE: TrueNAS-Proxmox Storage Integration Overview
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: truenas proxmox storage virtualization zfs
+
+* Overview
+
+This document provides a high-level overview of integrating TrueNAS storage with Proxmox VE when TrueNAS runs as a virtual machine within Proxmox. This configuration allows other VMs and containers in Proxmox to access centralized storage managed by TrueNAS.
+
+* Architecture Scenario
+
+The typical setup involves:
+
+- Proxmox VE as the hypervisor host
+- TrueNAS running as a VM inside Proxmox
+- Other VMs/containers in Proxmox that need storage access
+- Storage shares created in TrueNAS (NFS or iSCSI)
+- Network connectivity between TrueNAS VM and client VMs
+
+* Storage Share Types
+
+TrueNAS can provide storage to Proxmox VMs through two primary protocols:
+
+** NFS (Network File System)
+
+***Characteristics***
+- File-level network storage protocol
+- Easier to set up and manage
+- Better for general-purpose file sharing
+- Native support for multiple concurrent clients
+- More flexible for mixed workloads
+
+***Best Use Cases***
+- ISO image storage
+- Backup storage (VZDump)
+- Container templates
+- Shared storage for multiple VMs
+- General file storage needs
+
+** iSCSI (Internet Small Computer Systems Interface)
+
+***Characteristics***
+- Block-level network storage protocol
+- Appears as raw disk device to client
+- More complex configuration
+- Better performance for VM disk storage
+- Exclusive access per LUN
+
+***Best Use Cases***
+- VM disk images requiring high performance
+- Database storage
+- Applications needing block-level access
+- Single-client high-performance workloads
+
+* Integration Methods
+
+** Method 1: Direct VM-to-VM Access
+
+Client VMs mount NFS shares or connect to iSCSI targets directly from TrueNAS:
+
+***Advantages***
+- Simple configuration
+- No Proxmox host involvement
+- Each VM manages its own storage connections
+
+***Disadvantages***
+- Manual configuration per VM
+- No centralized storage management in Proxmox
+- More difficult to manage at scale
+
+** Method 2: Proxmox Datacenter Storage Integration (Recommended)
+
+Add TrueNAS storage to Proxmox's Datacenter Storage configuration:
+
+***Advantages***
+- Centralized storage management
+- Storage appears in Proxmox web interface
+- Can be used for VM disks, ISOs, backups, templates
+- Easy to allocate to VMs during creation
+- Consistent across all Proxmox nodes (in cluster)
+
+***Disadvantages***
+- Requires proper network configuration
+- Initial setup slightly more complex
+
+* Network Configuration Considerations
+
+** Option 1: Bridged Network (Most Common)
+
+TrueNAS VM gets IP on physical network:
+
+- TrueNAS accessible like physical appliance
+- Simple routing
+- Easy to access from multiple networks
+- Uses existing network infrastructure
+
+** Option 2: Internal Proxmox Network
+
+Dedicated virtual network for storage traffic:
+
+- Better performance isolation
+- Enhanced security segmentation
+- Requires additional network interface configuration
+- Lower latency (no physical network hop)
+
+** Option 3: Hybrid Approach
+
+- Management interface on bridged network
+- Dedicated storage interface on internal network
+- Best performance and security balance
+- More complex configuration
+
+* Performance Considerations
+
+** Network Interface Type
+
+Always use VirtIO network adapters for:
+- TrueNAS VM
+- Client VMs accessing storage
+- Significantly better performance than emulated adapters
+
+** Resource Allocation to TrueNAS
+
+TrueNAS requires adequate resources:
+
+***CPU***
+- Minimum: 2 cores
+- Recommended: 4+ cores for active storage serving
+
+***RAM***
+- Minimum: 8GB
+- Recommended: 16GB+ for ZFS ARC caching
+- ZFS benefits greatly from RAM for caching
+
+***Network***
+- Use VirtIO network adapter
+- Consider multiple network interfaces for separation
+- 10GbE for high-performance requirements
+
+** Storage Network Optimization
+
+- Dedicated VLAN for storage traffic
+- Jumbo frames (MTU 9000) where supported
+- Multiple paths for redundancy/load balancing
+
+* Security Considerations
+
+** Network Segmentation
+
+- Isolate storage traffic from general network
+- Use VLANs or separate network interfaces
+- Implement firewall rules appropriately
+
+** Authentication and Access Control
+
+***NFS***
+- Configure allowed networks/hosts
+- Use proper UID/GID mappings
+- Consider NFSv4 with Kerberos for production
+
+***iSCSI***
+- Use CHAP authentication
+- Configure initiator access lists
+- Limit target visibility by initiator IQN
+
+** Firewall Rules
+
+Required ports:
+- NFS: TCP/UDP 2049 (NFSv4), also 111, 32765-32768 for NFSv3
+- iSCSI: TCP 3260
+
+* Quick Comparison: NFS vs iSCSI for Proxmox
+
+| Feature | NFS | iSCSI |
+|---------+-----+-------|
+| Setup Complexity | Simple | Complex |
+| Best For | ISOs, backups, templates | VM disks |
+| Multi-client Access | Native | Requires clustering |
+| Performance | Good | Excellent |
+| Management | Easy | Moderate |
+| Flexibility | High | Moderate |
+| Proxmox Integration | Excellent | Excellent |
+
+* Recommendations by Use Case
+
+** Small Home Lab
+
+- Use NFS for simplicity
+- Single bridged network
+- Store ISOs, backups, and container templates
+- VM disks can use NFS or local storage
+
+** Performance-Focused Setup
+
+- Use iSCSI for VM disk storage
+- NFS for ISOs and backups
+- Dedicated storage network
+- Adequate RAM for TrueNAS ZFS caching
+
+** Production Environment
+
+- Both NFS and iSCSI (segregated by use case)
+- Redundant network paths
+- Dedicated storage VLANs
+- Proper CHAP authentication for iSCSI
+- Regular backup and snapshot strategies
+
+* Related Topics
+
+- [[file:truenas-nfs-proxmox-integration.org][TrueNAS NFS Integration with Proxmox]]
+- [[file:truenas-iscsi-proxmox-integration.org][TrueNAS iSCSI Integration with Proxmox]]
+- [[file:truenas-proxmox-networking.org][TrueNAS-Proxmox Network Configuration]]
+- [[file:zfs-capacity-management-best-practices.org][ZFS Capacity Management Best Practices]]
+- [[file:zfs-storage-provisioning.org][ZFS Storage Provisioning Types]]
+
+* TODO Tasks
+
+- TODO Test network performance between TrueNAS VM and client VMs
+- TODO Configure monitoring for storage performance metrics
+- TODO Implement automated backup of TrueNAS configuration
+- TODO Document disaster recovery procedures
