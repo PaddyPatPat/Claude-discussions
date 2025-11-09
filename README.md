@@ -92,14 +92,32 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [multi-format-document-processing.md](multi-format-document-processing.md) - Format-specific parsers and unified processing for org-mode, Markdown, PDF, HTML, and EPUB documents.
 
+## Qwen3-Coder & Apple Silicon MLX
+
+### Running Large Models Locally
+
+- [qwen3-coder-apple-silicon-mlx.org](qwen3-coder-apple-silicon-mlx.org) - Complete guide to running Qwen3-Coder-480B on Apple Silicon with MLX framework, including performance benchmarks, installation, and optimization tips.
+
+- [qwen3-coder-model-comparison.org](qwen3-coder-model-comparison.org) - Detailed comparison between Qwen3-Coder-30B and 480B models covering benchmarks, use cases, cost-benefit analysis, and hardware recommendations.
+
+- [llm-memory-context-calculations.org](llm-memory-context-calculations.org) - Mathematical formulas and practical calculations for determining memory requirements, maximum context windows, and hardware sizing for LLMs.
+
+### Distributed Inference
+
+- [distributed-llm-inference-apple-silicon.org](distributed-llm-inference-apple-silicon.org) - Methods for distributing LLM inference across multiple Apple Silicon devices, including custom pipeline parallelism, Ray framework, and performance comparisons.
+
+- [petals-distributed-llm.org](petals-distributed-llm.org) - BitTorrent-style collaborative LLM inference using Petals framework, covering public swarms, private deployment, and Apple Silicon setup.
+
 ## Repository Purpose
 
 This repository serves as a knowledge base for:
 - Setting up and optimizing Claude Code workflows
 - Integrating AI coding assistants with Emacs
+- Running large language models on Apple Silicon with MLX
 - Building distributed inference systems for LLMs
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems
 - Processing documents for vector embeddings and retrieval
+- Calculating memory requirements and optimizing context windows for LLMs
 
 All content has been extracted from actual conversations, deduplicated, and organized into focused single-topic files for easy reference.

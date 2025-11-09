@@ -1,0 +1,532 @@
+#+TITLE: Distributed LLM Inference on Apple Silicon
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: distributed-inference apple-silicon mlx multi-device llm
+
+* Overview
+
+This document explores methods for running large language models (particularly Qwen3-Coder-480B) in full precision across multiple Apple Silicon devices using distributed inference techniques.
+
+** The Problem
+
+- Single Apple Silicon devices max out at 512GB unified memory (M3 Ultra)
+- Full precision models (bf16/fp8) require 800GB-1TB+ RAM
+- MLX framework does not natively support distributed inference
+- Quantization reduces quality for some complex tasks
+- Need for distributed approaches to run full-precision large models
+
+** Current Status
+
+As of November 2025:
+- *MLX*: No native support for multi-device distributed inference
+- *Community Interest*: High demand, active GitHub discussions
+- *Workarounds*: Several theoretical approaches, none production-ready
+- *Complexity*: Significant engineering effort required
+
+* MLX Distributed Inference Limitations
+
+** Official MLX Status
+
+MLX does not currently support distributed inference across multiple Macs. According to GitHub Issue #1046:
+
+#+BEGIN_QUOTE
+The growth in size of open-source models is outpacing the growth of memory
+capacity of Mac computers, and MLX could be restricted to handling small to
+medium-sized models or heavily quantized versions of large models.
+#+END_QUOTE
+
+** Community Proposals
+
+The MLX community has proposed:
+- Multi-machine support for distributing inference across Macs connected via IP or Thunderbolt
+- Layer-based partitioning where different Macs handle different model layers
+- Pipeline parallelism for sequential token generation
+
+** Technical Challenges
+
+1. *Network Latency*: Inter-device communication introduces significant overhead
+2. *Bandwidth Limitations*: Even Thunderbolt is slower than unified memory
+3. *Synchronization*: Coordinating inference across devices is complex
+4. *Memory Management*: Efficient activation passing between devices
+5. *Fault Tolerance*: Handling device failures mid-inference
+
+* Distributed Inference Approaches
+
+** Approach 1: Custom Pipeline Parallelism (Most Practical)
+
+*** Overview
+
+Build a custom solution that splits model layers across devices using PyTorch with MPS (Metal Performance Shaders) backend.
+
+*** Architecture
+
+#+BEGIN_SRC text
+Device 1 (M3 Ultra, 512GB):
+  - Embedding layer
+  - Transformer layers 1-25
+  - Forward pass → send activations to Device 2
+
+Device 2 (M3 Ultra, 512GB):
+  - Transformer layers 26-50
+  - Receive from Device 1 → Process → Send to Device 3
+
+Device 3 (M3 Ultra, 512GB):
+  - Transformer layers 51-75
+  - Receive from Device 2 → Process → Send to Device 4
+
+Device 4 (M3 Ultra, 256GB):
+  - Transformer layers 76-96
+  - Output head and final processing
+#+END_SRC
+
+*** Implementation Components
+
+**** 1. Model Sharding
+
+#+BEGIN_SRC python
+import torch
+from transformers import AutoModelForCausalLM
+
+class DistributedModelShard:
+    def __init__(self, device_id, layer_start, layer_end, model_name):
+        self.device_id = device_id
+        self.layer_start = layer_start
+        self.layer_end = layer_end
+
+        # Load only the layers assigned to this device
+        self.model_shard = self.load_model_shard(model_name)
+
+    def load_model_shard(self, model_name):
+        # Load full model config but only initialize specific layers
+        # This requires custom model loading logic
+        pass
+
+    def forward(self, hidden_states):
+        # Process through assigned layers
+        for layer_idx in range(self.layer_start, self.layer_end):
+            hidden_states = self.model_shard.layers[layer_idx](hidden_states)
+        return hidden_states
+#+END_SRC
+
+**** 2. Communication Layer
+
+#+BEGIN_SRC python
+import socket
+import pickle
+import torch
+
+class TensorCommunicator:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+
+    def send_tensor(self, tensor, destination):
+        """Send tensor to another device over network"""
+        # Serialize tensor
+        data = pickle.dumps(tensor.cpu().numpy())
+
+        # Send over socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((destination['host'], destination['port']))
+        sock.sendall(data)
+        sock.close()
+
+    def receive_tensor(self):
+        """Receive tensor from another device"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind((self.host, self.port))
+        sock.listen(1)
+
+        conn, addr = sock.accept()
+        data = b''
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+
+        # Deserialize
+        tensor_np = pickle.loads(data)
+        return torch.from_numpy(tensor_np)
+#+END_SRC
+
+**** 3. Orchestration
+
+#+BEGIN_SRC python
+class DistributedInferencePipeline:
+    def __init__(self, devices_config):
+        self.devices = devices_config
+        self.communicators = self.setup_communicators()
+
+    def generate(self, prompt, max_tokens=100):
+        # Tokenize on first device
+        tokens = self.tokenize(prompt)
+
+        # Run through pipeline
+        for token_idx in range(max_tokens):
+            hidden_states = self.embed(tokens)
+
+            # Pass through each device sequentially
+            for device in self.devices:
+                hidden_states = self.forward_on_device(
+                    hidden_states,
+                    device
+                )
+
+            # Get next token
+            next_token = self.decode(hidden_states)
+            tokens.append(next_token)
+
+            if next_token == self.eos_token:
+                break
+
+        return self.detokenize(tokens)
+#+END_SRC
+
+*** Hardware Requirements
+
+| Component | Specification | Cost | Purpose |
+|-----------|---------------|------|---------|
+| Device 1 | M3 Ultra 512GB | ~$16,000 | Layers 1-25 + Embedding |
+| Device 2 | M3 Ultra 512GB | ~$16,000 | Layers 26-50 |
+| Device 3 | M3 Ultra 512GB | ~$16,000 | Layers 51-75 |
+| Device 4 | M3 Ultra 256GB | ~$12,000 | Layers 76-96 + Output |
+| Network | Thunderbolt 4/5 or 10GbE | ~$500 | Inter-device communication |
+| *Total* | | *~$60,500* | |
+
+*** Expected Performance
+
+- *Tokens/second*: 2-5 tokens/sec (estimated)
+- *Latency per token*: 200-500ms
+- *Memory per device*: 200-400GB for weights + activations
+- *Network overhead*: 50-200ms per device hop
+- *Total pipeline latency*: 200-800ms per token
+
+*** Development Timeline
+
+1. *Week 1-2*: Implement basic pipeline with smaller model (Llama 70B)
+2. *Week 3-4*: Optimize network communication and caching
+3. *Week 5-6*: Scale to Qwen3-Coder-480B
+4. *Week 7-8*: Add batching and performance optimizations
+
+*** Advantages
+
+- Full control over implementation
+- Best performance potential
+- No external dependencies
+- Can optimize for specific hardware
+
+*** Disadvantages
+
+- Significant development complexity
+- Requires custom model loading logic
+- Manual synchronization management
+- Debugging difficulty
+
+** Approach 2: Petals Distributed Framework
+
+See dedicated [[file:petals-distributed-llm.org][Petals documentation]] for detailed information.
+
+*** Quick Overview
+
+Petals enables BitTorrent-style distributed inference:
+- Load small part of model locally
+- Join network serving other parts
+- Supports Apple Silicon with simple installation
+
+*** Key Limitations for This Use Case
+
+- No existing Qwen3-Coder-480B support
+- Requires model conversion
+- Network latency significant
+- Privacy considerations with public swarms
+
+*** Suitability
+
+- *Low*: Would require significant work to adapt
+- Better for: Community-supported models
+- Alternative: Set up private Petals swarm with your devices
+
+** Approach 3: Ray + Transformers Distributed
+
+*** Overview
+
+Use Ray's distributed computing framework for model serving.
+
+*** Architecture
+
+#+BEGIN_SRC python
+import ray
+from ray import serve
+from transformers import AutoModelForCausalLM
+
+ray.init(address='auto')  # Connect to Ray cluster
+
+@serve.deployment(num_replicas=4)
+class ModelShard:
+    def __init__(self, shard_id):
+        self.shard_id = shard_id
+        self.model_shard = self.load_shard(shard_id)
+
+    async def __call__(self, hidden_states):
+        return await self.model_shard(hidden_states)
+
+# Deploy across cluster
+ModelShard.deploy()
+#+END_SRC
+
+*** Setup Ray Cluster Across Macs
+
+#+BEGIN_SRC bash
+# On head node (Mac 1)
+ray start --head --port=6379
+
+# On worker nodes (Mac 2, 3, 4)
+ray start --address='<head-node-ip>:6379'
+#+END_SRC
+
+*** Advantages
+
+- Robust distributed framework
+- Better fault tolerance
+- Easier scaling and monitoring
+- Built-in load balancing
+
+*** Disadvantages
+
+- Overhead from Ray framework
+- More complex setup than custom solution
+- May not fully utilize Metal/MPS acceleration
+- Additional memory overhead per node
+
+*** Development Timeline
+
+3-4 weeks including Ray cluster setup and optimization
+
+** Approach 4: DeepSpeed with Apple Silicon (Experimental)
+
+*** Current Status
+
+DeepSpeed has limited Apple Silicon support:
+- Primarily designed for NVIDIA GPUs
+- Some CPU inference capabilities
+- ZeRO-Infinity could theoretically work
+- No confirmed Apple Silicon distributed setups
+
+*** Risk Level
+
+*High* - Uncertain compatibility and performance
+
+*** Recommendation
+
+Not recommended unless other approaches fail
+
+* Network Infrastructure Considerations
+
+** Thunderbolt Networking
+
+*** Setup
+
+#+BEGIN_SRC bash
+# Connect Macs via Thunderbolt cable
+# Configure IP over Thunderbolt
+
+# On Mac 1
+sudo ifconfig bridge0 inet 192.168.100.1 netmask 255.255.255.0
+
+# On Mac 2
+sudo ifconfig bridge0 inet 192.168.100.2 netmask 255.255.255.0
+
+# Test bandwidth
+iperf3 -s  # On server
+iperf3 -c 192.168.100.1  # On client
+#+END_SRC
+
+*** Performance Characteristics
+
+- *Bandwidth*: Up to 40 Gbps (Thunderbolt 4/5)
+- *Latency*: 1-5ms
+- *Topology*: Daisy-chain or star with Thunderbolt hub
+- *Cost*: ~$50-100 per cable
+
+** 10 Gigabit Ethernet
+
+*** Advantages
+
+- More flexible topology
+- Longer cable runs possible
+- Easier to expand
+- Standard networking equipment
+
+*** Performance
+
+- *Bandwidth*: 10 Gbps
+- *Latency*: 0.5-2ms on local network
+- *Cost*: ~$100-200 per Mac (10GbE adapters) + switch (~$300-500)
+
+** Performance Comparison
+
+| Method | Bandwidth | Latency | Cost | Flexibility |
+|--------|-----------|---------|------|-------------|
+| Thunderbolt 4 | 40 Gbps | 1-5ms | Low | Limited daisy-chain |
+| Thunderbolt 5 | 80 Gbps | 1-3ms | Medium | Limited daisy-chain |
+| 10GbE | 10 Gbps | 0.5-2ms | Medium | Highly flexible |
+| 1GbE (Wi-Fi) | 1 Gbps | 5-20ms | Low | Very flexible but slow |
+
+*Recommendation*: Thunderbolt 5 (if available) or 10GbE for production setup
+
+* Performance Estimation Models
+
+** Theoretical Maximum Performance
+
+For Qwen3-Coder-480B with 96 layers split across 4 devices:
+
+#+BEGIN_SRC text
+Assumptions:
+- 24 layers per device
+- Each layer processes in 20ms locally
+- Network transfer: 100ms per hop
+- Total hops: 3 (Device 1→2→3→4)
+
+Per-token latency:
+  Local processing: 4 × 20ms = 80ms
+  Network transfers: 3 × 100ms = 300ms
+  Total: 380ms per token
+
+Tokens per second: 1000ms / 380ms ≈ 2.6 tokens/sec
+#+END_SRC
+
+** Optimized Scenario
+
+With pipeline parallelism and optimizations:
+
+#+BEGIN_SRC text
+Pipeline allows overlapping:
+- While Device 4 processes token N
+- Device 3 processes token N+1
+- Device 2 processes token N+2
+- Device 1 processes token N+3
+
+Effective throughput: ~4-6 tokens/sec
+Latency: Still 380ms for first token
+#+END_SRC
+
+* Comparison: Distributed vs Quantized Single Device
+
+| Approach | Hardware Cost | Tokens/Sec | Complexity | Quality |
+|----------|---------------|------------|------------|---------|
+| 4-bit quantized (1x M3 Ultra 512GB) | $16,000 | 24 | Low | Good |
+| Distributed bf16 (4x M3 Ultra) | $60,500 | 2-5 | Very High | Excellent |
+| 8-bit quantized (1x M3 Ultra 512GB) | $16,000 | ~18 | Low | Very Good |
+
+** Recommendation
+
+For most use cases, *4-bit or 8-bit quantized on single M3 Ultra* is more practical:
+- 5-10x faster inference
+- 75% lower cost
+- Much simpler to maintain
+- Quality difference minimal for most coding tasks
+
+Distributed approach only justified when:
+- Absolute highest quality required
+- Budget allows 4x hardware cost
+- Have time for development/maintenance
+- Working on cutting-edge research
+
+* Implementation Roadmap
+
+** Phase 1: Proof of Concept (2-3 weeks)
+
+1. Set up 2 Mac Studios with Thunderbolt networking
+2. Implement basic pipeline with Llama 70B
+3. Measure network latency and throughput
+4. Validate tensor passing works correctly
+
+** Phase 2: Scale to Production (3-4 weeks)
+
+1. Add devices 3 and 4
+2. Implement full Qwen3-Coder-480B loading
+3. Optimize network communication (compression, caching)
+4. Add monitoring and error handling
+
+** Phase 3: Optimization (2-3 weeks)
+
+1. Implement pipeline parallelism
+2. Add batching support
+3. Optimize memory usage
+4. Performance tuning and benchmarking
+
+** Total Timeline: 7-10 weeks
+
+* Monitoring and Debugging
+
+** Network Performance Monitoring
+
+#+BEGIN_SRC bash
+# Monitor network bandwidth
+nload -u M
+
+# Check latency between devices
+ping -c 100 192.168.100.2 | tail -1
+
+# Monitor network sockets
+netstat -an | grep ESTABLISHED
+#+END_SRC
+
+** Model Execution Monitoring
+
+#+BEGIN_SRC python
+import time
+import logging
+
+class PerformanceMonitor:
+    def __init__(self):
+        self.timings = {}
+
+    def measure(self, operation_name):
+        def decorator(func):
+            def wrapper(*args, **kwargs):
+                start = time.time()
+                result = func(*args, **kwargs)
+                elapsed = time.time() - start
+
+                if operation_name not in self.timings:
+                    self.timings[operation_name] = []
+                self.timings[operation_name].append(elapsed)
+
+                logging.info(f"{operation_name}: {elapsed:.3f}s")
+                return result
+            return wrapper
+        return decorator
+
+    def report(self):
+        for op, timings in self.timings.items():
+            avg = sum(timings) / len(timings)
+            print(f"{op}: avg={avg:.3f}s, min={min(timings):.3f}s, max={max(timings):.3f}s")
+#+END_SRC
+
+* Related Documentation
+
+- [[file:qwen3-coder-apple-silicon-mlx.org][Qwen3-Coder on Apple Silicon (Single Device)]]
+- [[file:petals-distributed-llm.org][Petals Distributed LLM Framework]]
+- [[file:qwen3-coder-model-comparison.org][Model Size Comparison (30B vs 480B)]]
+- [[file:llm-memory-context-calculations.org][Memory and Context Window Calculations]]
+
+* TODO Tasks
+
+- TODO Implement proof-of-concept with Llama 70B on 2 devices
+- TODO Benchmark Thunderbolt 5 vs 10GbE for tensor transfer
+- TODO Test pipeline parallelism with toy model
+- TODO Measure actual end-to-end latency with real hardware
+- TODO Compare quality: bf16 distributed vs 4-bit single device
+- TODO Document cost-benefit analysis with real-world usage data
+- TODO Create automated deployment scripts for Ray cluster
+- TODO Build monitoring dashboard for distributed inference
+
+* References
+
+- [[https://github.com/ml-explore/mlx/issues/1046][MLX GitHub Issue #1046: Multi-Machine Support]]
+- [[https://github.com/bigscience-workshop/petals][Petals: Distributed LLM Inference]]
+- [[https://github.com/ray-project/ray][Ray: Distributed Computing Framework]]
+- [[https://github.com/microsoft/DeepSpeed][DeepSpeed: Deep Learning Optimization]]
+- [[https://arxiv.org/abs/2209.01188][Petals Research Paper]]

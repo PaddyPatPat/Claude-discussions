@@ -1,0 +1,280 @@
+#+TITLE: Running Qwen3-Coder on Apple Silicon with MLX
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: qwen3 apple-silicon mlx llm inference performance
+
+* Overview
+
+This document covers running the Qwen3-Coder-480B-A35B-Instruct model on Apple Silicon using the MLX framework. The Qwen3-Coder model is a state-of-the-art coding model that supports 256K tokens natively and 1M tokens with extrapolation methods.
+
+The model comes in several variants:
+- *Total Parameters*: 480B (Mixture-of-Experts architecture)
+- *Active Parameters*: 35B during inference
+- *Context Window*: 256K native, 1M+ with extrapolation
+- *Capabilities*: Exceptional performance in coding, agentic tasks, browser-use, and tool-use
+
+* Performance Benchmarks
+
+** Confirmed Results on M3 Ultra
+
+Awni Hannun successfully ran the 4-bit quantized MLX version on a 512GB M3 Ultra Mac Studio with the following performance:
+
+- *Tokens per second*: 24 tokens/second
+- *RAM Usage*: 272GB
+- *Quantization Level*: 4-bit
+- *Performance Quality*: Good results for coding tasks (e.g., generating Python scripts for bouncing ball with collision detection)
+
+This represents the most documented and verified approach for running this model on Apple Silicon.
+
+** Performance Characteristics by Quantization Level
+
+| Quantization | Memory Required | Availability | Performance Trade-off |
+|--------------+-----------------+--------------+-----------------------|
+| bf16         | ~800GB-1TB      | Not feasible | Full precision        |
+| fp8          | ~480-600GB      | Not feasible | High precision        |
+| 8-bit        | ~480GB          | Available    | Good precision        |
+| 6-bit        | ~360GB          | Available    | Balanced              |
+| 4-bit        | ~240-300GB      | Available    | Recommended           |
+
+* Hardware Requirements
+
+** Minimum Viable Configuration
+
+For 4-bit quantized version (recommended):
+- *Device*: Mac Studio M3 Ultra or M4 Max
+- *Unified Memory*: 512GB minimum (256GB may work with heavy swapping)
+- *Storage*: 300GB+ free space for model files
+- *Network*: High-speed internet for initial download
+
+** Why Higher Precision Versions Don't Work
+
+Current Apple Silicon configurations cannot run full precision versions:
+- M3 Ultra maxes out at 512GB unified memory
+- bf16 version requires ~800GB-1TB RAM
+- fp8 version requires ~480-600GB RAM
+- No documented successful runs exist for bf16/fp8 on Apple Silicon
+- Only quantized versions (4-bit, 6-bit, 8-bit) are viable
+
+* Installation and Setup
+
+** MLX Framework Installation
+
+#+BEGIN_SRC bash
+# Install Homebrew if not already installed
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Python
+brew install python
+
+# Install MLX and mlx-lm
+pip install mlx mlx-lm
+#+END_SRC
+
+** Downloading Model Files
+
+The 4-bit quantized model is available from Hugging Face:
+
+#+BEGIN_SRC bash
+# Using Hugging Face CLI
+huggingface-cli download mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-4bit
+
+# Or using Python
+#+END_SRC
+
+#+BEGIN_SRC python
+from huggingface_hub import snapshot_download
+
+model_path = snapshot_download(
+    repo_id="mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-4bit",
+    local_dir="./qwen3-coder-480b-4bit"
+)
+#+END_SRC
+
+** Running Inference
+
+#+BEGIN_SRC python
+from mlx_lm import load, generate
+
+# Load the model
+model, tokenizer = load("mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-4bit")
+
+# Generate code
+prompt = "Write a Python function to implement binary search"
+response = generate(model, tokenizer, prompt=prompt, max_tokens=512)
+print(response)
+#+END_SRC
+
+* Available MLX Model Variants
+
+All variants are hosted by the mlx-community on Hugging Face:
+
+** 4-bit Quantized (Recommended)
+- Repository: =mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-4bit=
+- Memory: ~240-300GB
+- Performance: 24 tokens/sec on M3 Ultra (512GB)
+- Quality: Excellent for most coding tasks
+
+** 6-bit Quantized
+- Repository: =mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-6bit=
+- Memory: ~360GB
+- Performance: Slightly slower than 4-bit
+- Quality: Better precision, marginal improvement
+
+** 8-bit Quantized
+- Repository: =mlx-community/Qwen3-Coder-480B-A35B-Instruct-MLX-8bit=
+- Memory: ~480GB
+- Performance: Slower than lower bit versions
+- Quality: Higher precision, close to fp8
+
+* Limitations and Considerations
+
+** Current Limitations
+
+1. *No Full Precision Support*: bf16 and fp8 versions exceed available memory on all current Apple Silicon configurations
+2. *Single Device Only*: MLX does not currently support distributed inference across multiple Macs (see [[file:distributed-llm-inference-apple-silicon.org][Distributed Inference Documentation]])
+3. *Quantization Trade-offs*: 4-bit quantization may affect output quality for extremely complex tasks
+4. *Memory Pressure*: Even with 512GB, the system may experience memory pressure during long sessions
+
+** Performance Bottlenecks
+
+- *Memory Bandwidth*: Large model weights stress unified memory bandwidth
+- *Thermal Throttling*: Extended inference sessions may trigger thermal throttling
+- *KV Cache Growth*: Long context windows consume increasing memory
+- *First Token Latency*: Initial inference has higher latency due to model loading
+
+* Use Cases and Applications
+
+** Ideal Use Cases
+
+- Code generation and completion
+- Code refactoring and optimization
+- Algorithm implementation
+- Multi-file code analysis
+- Documentation generation
+- Bug detection and fixing
+- Code review and suggestions
+
+** Scenarios Where Smaller Models May Suffice
+
+For many practical applications, the [[file:qwen3-coder-model-comparison.org][Qwen3-Coder-30B model]] may be more appropriate:
+- Single-file editing tasks
+- Standard programming patterns
+- Quick prototyping
+- Learning and experimentation
+- Budget-constrained deployments
+
+* Performance Optimization Tips
+
+** Memory Management
+
+#+BEGIN_SRC python
+# Clear KV cache periodically for long sessions
+# Force garbage collection
+import gc
+gc.collect()
+
+# Monitor memory usage
+import psutil
+memory_info = psutil.virtual_memory()
+print(f"Memory used: {memory_info.percent}%")
+#+END_SRC
+
+** Batch Processing
+
+For processing multiple requests, batch them to amortize model loading costs:
+
+#+BEGIN_SRC python
+prompts = [
+    "Write a function for X",
+    "Implement algorithm Y",
+    "Debug this code: Z"
+]
+
+# Process in batch
+for prompt in prompts:
+    response = generate(model, tokenizer, prompt=prompt, max_tokens=256)
+    # Process response
+#+END_SRC
+
+** Temperature and Sampling Settings
+
+#+BEGIN_SRC python
+# For more deterministic code generation
+response = generate(
+    model,
+    tokenizer,
+    prompt=prompt,
+    max_tokens=512,
+    temperature=0.1,  # Lower for more deterministic output
+    top_p=0.9
+)
+#+END_SRC
+
+* Cost Analysis
+
+** Hardware Investment
+
+| Configuration       | Cost (USD) | Viability for 480B 4-bit |
+|--------------------+-----------+--------------------------|
+| M3 Ultra 256GB     | ~$12,000  | Marginal (heavy swap)    |
+| M3 Ultra 512GB     | ~$16,000  | Excellent                |
+| M4 Max 128GB       | ~$8,000   | Not recommended          |
+| Mac Studio M3 512GB| ~$16,000  | Recommended              |
+
+** Cost Comparison: Local vs Cloud
+
+For occasional use:
+- *Cloud API* (e.g., Alibaba Cloud): ~$0.01-0.05 per 1K tokens
+- *Local M3 Ultra 512GB*: $16,000 upfront, zero marginal cost
+- *Break-even*: ~500K-1M inference requests
+
+For regular development work (>100K tokens/day), local deployment is cost-effective within 6-12 months.
+
+* Monitoring and Debugging
+
+** System Monitoring
+
+#+BEGIN_SRC bash
+# Monitor memory usage
+top -pid $(pgrep -f python)
+
+# Check temperature and power
+sudo powermetrics --samplers smc -i 1000 -n 1
+
+# MLX-specific monitoring
+# Check GPU utilization (Metal)
+#+END_SRC
+
+** Common Issues and Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Out of memory | Insufficient RAM | Use lower bit quantization, reduce batch size |
+| Slow inference | Thermal throttling | Improve cooling, reduce ambient temperature |
+| Model loading fails | Corrupted download | Re-download model files |
+| Poor output quality | 4-bit quantization limits | Try 6-bit or 8-bit version |
+
+* Related Documentation
+
+- [[file:qwen3-coder-model-comparison.org][Qwen3-Coder Model Comparison (30B vs 480B)]]
+- [[file:distributed-llm-inference-apple-silicon.org][Distributed LLM Inference on Apple Silicon]]
+- [[file:llm-memory-context-calculations.org][LLM Memory and Context Window Calculations]]
+- [[file:petals-distributed-llm.org][Petals: Distributed LLM Inference Framework]]
+
+* TODO Tasks and Future Exploration
+
+- TODO Test 6-bit quantization to compare quality vs 4-bit
+- TODO Benchmark actual tokens/sec on M4 Max configurations
+- TODO Explore Flash Attention integration for faster inference
+- TODO Test maximum achievable context window on 512GB configuration
+- TODO Document best practices for long-context coding tasks
+- TODO Create automated benchmarking scripts for different quantization levels
+
+* References and Resources
+
+- [[https://github.com/ml-explore/mlx][MLX Framework (GitHub)]]
+- [[https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct][Qwen3-Coder-480B Official Model Page]]
+- [[https://huggingface.co/mlx-community][MLX Community Models on Hugging Face]]
+- [[https://qwen.github.io/][Qwen Official Documentation]]
+- Awni Hannun's Tweet on M3 Ultra Performance
+- Simon Willison's Qwen3-Coder Analysis

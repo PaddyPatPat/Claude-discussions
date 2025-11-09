@@ -1,0 +1,440 @@
+#+TITLE: Petals: Distributed LLM Inference Framework
+#+AUTHOR: Claude
+#+DATE: [2025-11-09]
+#+TAGS: petals distributed-inference llm collaborative-computing apple-silicon
+
+* Overview
+
+Petals is a system for running large language models collaboratively, BitTorrent-style. It allows you to run massive models by loading only a small part locally while joining a network of people serving the other parts.
+
+** Key Concept
+
+Instead of loading the entire model on one machine, Petals distributes model layers across multiple devices connected over the internet or local network. Each participant contributes compute resources to the collective.
+
+** Supported Models
+
+As of the latest version, Petals supports:
+- Llama 3.1 (up to 405B parameters)
+- Mixtral (8x22B)
+- Falcon (40B+)
+- BLOOM (176B)
+
+*Note*: Qwen3-Coder-480B is not currently supported but could theoretically be added with model conversion.
+
+* How Petals Works
+
+** Architecture
+
+#+BEGIN_SRC text
+┌─────────────────────────────────────────────────┐
+│           Your Device (Client)                   │
+│  ┌──────────────────────────────────────┐       │
+│  │ Embedding Layer                       │       │
+│  │ Layers 1-10                           │       │
+│  └──────────────────────────────────────┘       │
+└─────────────────────────────────────────────────┘
+                    ↓ Network ↓
+┌─────────────────────────────────────────────────┐
+│         Peer 1 (Remote Server)                   │
+│  ┌──────────────────────────────────────┐       │
+│  │ Layers 11-30                          │       │
+│  └──────────────────────────────────────┘       │
+└─────────────────────────────────────────────────┘
+                    ↓ Network ↓
+┌─────────────────────────────────────────────────┐
+│         Peer 2 (Remote Server)                   │
+│  ┌──────────────────────────────────────┐       │
+│  │ Layers 31-50                          │       │
+│  └──────────────────────────────────────┘       │
+└─────────────────────────────────────────────────┘
+                    ↓ Network ↓
+┌─────────────────────────────────────────────────┐
+│         Peer 3 (Remote Server)                   │
+│  ┌──────────────────────────────────────┐       │
+│  │ Layers 51-80 + Output Head            │       │
+│  └──────────────────────────────────────┘       │
+└─────────────────────────────────────────────────┘
+#+END_SRC
+
+** Inference Flow
+
+1. *Client Request*: You send a prompt from your device
+2. *Local Processing*: Your device processes the first few layers
+3. *Network Routing*: Activations sent to peer with next layers
+4. *Distributed Processing*: Each peer processes their assigned layers
+5. *Final Output*: Last peer returns results back to you
+
+* Installation and Setup
+
+** Installing Petals on Apple Silicon
+
+#+BEGIN_SRC bash
+# Install Python (if not already installed)
+brew install python
+
+# Install Petals
+python3 -m pip install git+https://github.com/bigscience-workshop/petals
+
+# Verify installation
+python3 -c "import petals; print(petals.__version__)"
+#+END_SRC
+
+** Running as a Server (Contributing Resources)
+
+#+BEGIN_SRC bash
+# Serve Llama 3.1 405B
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct
+
+# Serve specific layers (e.g., layers 20-40)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --block_indices 20:40
+
+# Serve with GPU acceleration (if available)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --device mps  # Use Metal Performance Shaders on Apple Silicon
+#+END_SRC
+
+** Running as a Client (Using the Model)
+
+#+BEGIN_SRC python
+from petals import AutoDistributedModelForCausalLM
+from transformers import AutoTokenizer
+
+# Load model (downloads only the parts you'll serve)
+model_name = "meta-llama/Meta-Llama-3.1-405B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoDistributedModelForCausalLM.from_pretrained(model_name)
+
+# Generate text
+inputs = tokenizer("Write a Python function to", return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=100)
+print(tokenizer.decode(outputs[0]))
+#+END_SRC
+
+* Performance Characteristics
+
+** Public Swarm Performance
+
+Based on official benchmarks:
+- *Llama 2 (70B)*: Up to 6 tokens/sec (single-batch inference)
+- *Falcon (180B)*: Up to 4 tokens/sec (single-batch inference)
+- *BLOOM (176B)*: 3-5 tokens/sec (varies by network conditions)
+
+** Factors Affecting Performance
+
+1. *Network Quality*: Internet speed between peers
+2. *Peer Availability*: Number of online servers hosting layers
+3. *Geographic Distribution*: Physical distance to peer servers
+4. *Congestion*: How many users are simultaneously using the swarm
+5. *Your Contribution*: Hosting more layers can improve priority
+
+** Performance Comparison
+
+| Setup | Tokens/Sec | Latency | Cost | Privacy |
+|-------|------------|---------|------|---------|
+| Petals Public Swarm | 3-6 | High (internet) | Free | Low |
+| Petals Private Swarm (4 Macs) | 8-15 | Medium (LAN) | Hardware only | High |
+| Single Mac 4-bit Quantized | 20-24 | Low | $16k | High |
+| Distributed Custom (4 Macs) | 2-5 | Medium | $60k | High |
+
+* Privacy and Security Considerations
+
+** Public Swarm Risks
+
+#+BEGIN_QUOTE
+When using Petals, your data will be processed with the help of other people
+in the public swarm. This means your prompts and generated text are sent to
+and processed by other users' servers.
+#+END_QUOTE
+
+** Privacy Implications
+
+- ⚠️ *Prompts are visible*: Other servers process your input
+- ⚠️ *Outputs are visible*: Generated text passes through peers
+- ⚠️ *No encryption guarantee*: Data may not be encrypted in transit
+- ⚠️ *Logging possible*: Peer servers could log your requests
+
+** When NOT to Use Public Swarm
+
+- Proprietary code or business logic
+- Sensitive personal information
+- Confidential data processing
+- Production applications with privacy requirements
+- Regulated industries (healthcare, finance, etc.)
+
+** Private Swarm Solution
+
+Set up a private Petals swarm among trusted devices:
+
+#+BEGIN_SRC bash
+# On each of your own Macs, specify initial peers
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --initial_peers /ip4/192.168.1.10/tcp/31337/p2p/QmYourPeerID1 \
+                    /ip4/192.168.1.11/tcp/31337/p2p/QmYourPeerID2
+
+# This creates a closed network of only your devices
+#+END_SRC
+
+** Security Features
+
+- *No arbitrary code execution*: Hosting a server does NOT allow others to run custom code on your computer
+- *Model integrity*: Cryptographic verification of model weights
+- *Transport security*: Can configure TLS for peer communication
+
+* Use Cases for Apple Silicon
+
+** Ideal Scenarios
+
+1. *Research and Experimentation*
+   - Testing large models without full hardware
+   - Prototyping applications
+   - Academic research with non-sensitive data
+
+2. *Private Swarms*
+   - Distribute across your own Apple Silicon devices
+   - Office/lab environment with trusted network
+   - Maximum privacy with distributed benefits
+
+3. *Community Projects*
+   - Open-source development
+   - Public-facing applications
+   - Educational projects
+
+** Not Recommended For
+
+1. *Production Services*
+   - Unreliable public swarm availability
+   - Variable performance
+   - Privacy concerns
+
+2. *Latency-Sensitive Applications*
+   - Real-time interactions
+   - Low-latency requirements
+   - Interactive coding assistants
+
+3. *Proprietary Work*
+   - Commercial code generation
+   - Confidential data processing
+   - Intellectual property development
+
+* Setting Up Private Swarm with Multiple Macs
+
+** Hardware Configuration
+
+Example setup with 4 Mac Studios:
+
+| Device | Model | RAM | Layers Hosted | Network IP |
+|--------|-------|-----|---------------|------------|
+| Mac 1 | M3 Ultra | 256GB | 0-24 | 192.168.1.10 |
+| Mac 2 | M3 Ultra | 256GB | 25-49 | 192.168.1.11 |
+| Mac 3 | M3 Ultra | 256GB | 50-74 | 192.168.1.12 |
+| Mac 4 | M3 Ultra | 256GB | 75-95 | 192.168.1.13 |
+
+** Network Setup
+
+#+BEGIN_SRC bash
+# Connect all Macs to same local network
+# Use 10GbE or Thunderbolt networking for best performance
+
+# Test connectivity
+ping 192.168.1.11  # From Mac 1
+ping 192.168.1.12
+ping 192.168.1.13
+
+# Test bandwidth
+iperf3 -s  # On Mac 1
+iperf3 -c 192.168.1.10  # From Mac 2
+#+END_SRC
+
+** Deploying Private Swarm
+
+#+BEGIN_SRC bash
+# Mac 1 (First server, no initial peers needed)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --host_maddrs /ip4/192.168.1.10/tcp/31337 \
+    --block_indices 0:24
+
+# Get peer ID from Mac 1 output:
+# "Running DHT node on ['/ip4/192.168.1.10/tcp/31337/p2p/QmMac1PeerID']"
+
+# Mac 2 (Connect to Mac 1)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --host_maddrs /ip4/192.168.1.11/tcp/31337 \
+    --initial_peers /ip4/192.168.1.10/tcp/31337/p2p/QmMac1PeerID \
+    --block_indices 25:49
+
+# Mac 3 (Connect to network)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --host_maddrs /ip4/192.168.1.12/tcp/31337 \
+    --initial_peers /ip4/192.168.1.10/tcp/31337/p2p/QmMac1PeerID \
+    --block_indices 50:74
+
+# Mac 4 (Connect to network)
+python3 -m petals.cli.run_server meta-llama/Meta-Llama-3.1-405B-Instruct \
+    --host_maddrs /ip4/192.168.1.13/tcp/31337 \
+    --initial_peers /ip4/192.168.1.10/tcp/31337/p2p/QmMac1PeerID \
+    --block_indices 75:95
+#+END_SRC
+
+** Client Configuration for Private Swarm
+
+#+BEGIN_SRC python
+from petals import AutoDistributedModelForCausalLM
+from transformers import AutoTokenizer
+import os
+
+# Point to your private swarm
+os.environ["PETALS_INITIAL_PEERS"] = "/ip4/192.168.1.10/tcp/31337/p2p/QmMac1PeerID"
+
+model_name = "meta-llama/Meta-Llama-3.1-405B-Instruct"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+# This will connect to your private swarm instead of public
+model = AutoDistributedModelForCausalLM.from_pretrained(model_name)
+
+# Use normally
+inputs = tokenizer("Implement quicksort in Python", return_tensors="pt")
+outputs = model.generate(**inputs, max_new_tokens=200)
+print(tokenizer.decode(outputs[0]))
+#+END_SRC
+
+* Adding Qwen3-Coder to Petals
+
+** Current Status
+
+Qwen3-Coder-480B is NOT officially supported in Petals as of November 2025.
+
+** Theoretical Conversion Process
+
+To add Qwen3-Coder support, you would need to:
+
+1. *Convert Model Format*
+   #+BEGIN_SRC python
+   # This is conceptual - actual implementation is complex
+   from petals import DistributedBloomForCausalLM
+   from transformers import AutoModelForCausalLM
+
+   # Load Qwen3 model
+   qwen_model = AutoModelForCausalLM.from_pretrained(
+       "Qwen/Qwen3-Coder-480B-A35B-Instruct"
+   )
+
+   # Convert to Petals-compatible format
+   # Requires understanding of both model architectures
+   # and Petals internals
+   #+END_SRC
+
+2. *Create Model Configuration*
+   - Define layer structure
+   - Configure block sizes
+   - Set up attention mechanisms
+
+3. *Host Initial Blocks*
+   - Upload model blocks to Hugging Face
+   - Configure DHT initial peers
+   - Deploy first servers
+
+** Complexity and Timeline
+
+- *Difficulty*: High - requires deep understanding of model architectures
+- *Timeline*: 2-4 weeks for experienced ML engineer
+- *Community Support*: Could request official Petals team support
+- *Alternative*: Wait for official support or use supported models
+
+* Monitoring and Management
+
+** Server Monitoring
+
+#+BEGIN_SRC bash
+# Check server status
+curl http://localhost:8080/api/v1/state
+
+# Monitor logs
+tail -f petals_server.log
+
+# Check memory usage
+top -pid $(pgrep -f petals.cli.run_server)
+#+END_SRC
+
+** Performance Monitoring
+
+#+BEGIN_SRC python
+import time
+from petals import AutoDistributedModelForCausalLM
+
+model = AutoDistributedModelForCausalLM.from_pretrained("meta-llama/Meta-Llama-3.1-405B-Instruct")
+
+# Benchmark inference
+start = time.time()
+outputs = model.generate(inputs, max_new_tokens=100)
+elapsed = time.time() - start
+
+tokens_generated = 100
+tokens_per_sec = tokens_generated / elapsed
+print(f"Performance: {tokens_per_sec:.2f} tokens/sec")
+#+END_SRC
+
+** Troubleshooting Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Cannot find peers | Network configuration | Check firewall, verify initial_peers |
+| Slow inference | Poor network or few peers | Add more servers, improve network |
+| Connection drops | Unstable internet | Use private swarm on LAN |
+| High memory usage | Too many blocks hosted | Reduce block_indices range |
+
+* Comparison to Other Approaches
+
+** Petals vs Custom Pipeline
+
+| Feature | Petals | Custom Pipeline |
+|---------|--------|-----------------|
+| Setup Complexity | Low | High |
+| Performance (Private) | Medium | High |
+| Performance (Public) | Low-Medium | N/A |
+| Flexibility | Low | High |
+| Maintenance | Low | High |
+| Privacy (Private) | High | High |
+| Privacy (Public) | Low | N/A |
+| Cost | Low | High |
+
+** When to Choose Petals
+
+- Quick experimentation needed
+- Limited hardware budget
+- Comfortable with public swarm privacy trade-offs
+- Want to contribute to community resources
+- Need model not available elsewhere
+
+** When to Choose Custom Pipeline
+
+- Need maximum performance
+- Full privacy required
+- Have budget for multiple high-end Macs
+- Can invest in development time
+- Need custom optimizations
+
+* Related Documentation
+
+- [[file:distributed-llm-inference-apple-silicon.org][Distributed LLM Inference on Apple Silicon]]
+- [[file:qwen3-coder-apple-silicon-mlx.org][Qwen3-Coder on Apple Silicon with MLX]]
+- [[file:qwen3-coder-model-comparison.org][Qwen3-Coder Model Comparison]]
+
+* TODO Tasks
+
+- TODO Test Petals with Llama 3.1 405B on private Mac swarm
+- TODO Benchmark private swarm performance vs public swarm
+- TODO Document Qwen3-Coder conversion process
+- TODO Create automated deployment scripts for private swarm
+- TODO Measure actual tokens/sec on 4-Mac private setup
+- TODO Compare quality: Petals distributed vs local quantized
+- TODO Build monitoring dashboard for private swarm health
+- TODO Document firewall and network configuration requirements
+
+* References and Resources
+
+- [[https://github.com/bigscience-workshop/petals][Petals GitHub Repository]]
+- [[https://arxiv.org/abs/2209.01188][Petals Research Paper: "Petals: Collaborative Inference and Fine-tuning of Large Models"]]
+- [[https://petals.dev/][Petals Official Website]]
+- [[https://huggingface.co/docs/petals][Petals Documentation on Hugging Face]]
+- Community Discord and Support Forums
