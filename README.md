@@ -92,6 +92,14 @@ A collection of educational content extracted from conversations with Claude, or
 
 - [multi-format-document-processing.md](multi-format-document-processing.md) - Format-specific parsers and unified processing for org-mode, Markdown, PDF, HTML, and EPUB documents.
 
+## Professional Communication & Business Practices
+
+### Email Communication
+
+- [professional-email-tone-refinement.org](professional-email-tone-refinement.org) - Iterative process of refining professional emails from deferential to collaborative, with specific language strategies and before/after examples.
+
+- [contractor-invoicing-communication.org](contractor-invoicing-communication.org) - Best practices for freelance/contract workers requesting invoice clarification, handling rate discrepancies, and managing ongoing client relationships.
+
 ## Repository Purpose
 
 This repository serves as a knowledge base for:
@@ -101,5 +109,6 @@ This repository serves as a knowledge base for:
 - Batch processing large volumes of inference requests
 - Implementing semantic search and knowledge management systems
 - Processing documents for vector embeddings and retrieval
+- Professional business communication and contracting best practices
 
 All content has been extracted from actual conversations, deduplicated, and organized into focused single-topic files for easy reference.
